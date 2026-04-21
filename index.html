@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title id="page-title">フォーム</title>
+  <title>フォーム</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -12,176 +12,77 @@
       color: #333;
       min-height: 100vh;
     }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 20px 16px 40px;
-    }
-    h1 {
-      font-size: 1.4rem;
-      font-weight: 700;
-      margin-bottom: 6px;
-      color: #1a1a1a;
-    }
-    .description {
-      font-size: 0.9rem;
-      color: #666;
-      margin-bottom: 24px;
-      line-height: 1.6;
-    }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px 16px 40px; }
+    h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 6px; color: #1a1a1a; }
+    .description { font-size: 0.9rem; color: #666; margin-bottom: 24px; line-height: 1.6; }
     .step {
-      background: #fff;
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 16px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      background: #fff; border-radius: 12px; padding: 20px;
+      margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
     }
-    .step-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
+    .step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .step-number {
-      background: #4f46e5;
-      color: #fff;
-      border-radius: 50%;
-      width: 28px;
-      height: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.85rem;
-      font-weight: 700;
-      flex-shrink: 0;
+      background: #4f46e5; color: #fff; border-radius: 50%;
+      width: 28px; height: 28px; display: flex; align-items: center;
+      justify-content: center; font-size: 0.85rem; font-weight: 700; flex-shrink: 0;
     }
-    .step-title {
-      font-size: 1rem;
-      font-weight: 600;
+    .step-title { font-size: 1rem; font-weight: 600; }
+    .field-group { margin-bottom: 14px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #444; }
+    label .required { color: #e53e3e; margin-left: 4px; }
+    input[type="text"], input[type="tel"], input[type="email"], textarea, select {
+      width: 100%; padding: 12px 14px; border: 1.5px solid #ddd; border-radius: 8px;
+      font-size: 1rem; font-family: inherit; transition: border-color 0.2s;
+      background: #fff; -webkit-appearance: none;
     }
-    .field-group {
-      margin-bottom: 14px;
-    }
-    label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      margin-bottom: 6px;
-      color: #444;
-    }
-    label .required {
-      color: #e53e3e;
-      margin-left: 4px;
-    }
-    input[type="text"],
-    input[type="tel"],
-    input[type="email"],
-    textarea,
-    select {
-      width: 100%;
-      padding: 12px 14px;
-      border: 1.5px solid #ddd;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-family: inherit;
-      transition: border-color 0.2s;
-      background: #fff;
-      -webkit-appearance: none;
-    }
-    input:focus, textarea:focus, select:focus {
-      outline: none;
-      border-color: #4f46e5;
-    }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #4f46e5; }
     textarea { resize: vertical; min-height: 80px; }
 
-    /* アフィリエイトリンクボタン */
     .affiliate-btn {
-      display: block;
-      width: 100%;
-      padding: 16px;
-      background: #4f46e5;
-      color: #fff;
-      border: none;
-      border-radius: 10px;
-      font-size: 1rem;
-      font-weight: 700;
-      cursor: pointer;
-      text-align: center;
-      text-decoration: none;
-      transition: background 0.2s, transform 0.1s;
-      line-height: 1.4;
+      display: block; width: 100%; padding: 16px; background: #4f46e5; color: #fff;
+      border: none; border-radius: 10px; font-size: 1rem; font-weight: 700;
+      cursor: pointer; text-align: center; text-decoration: none;
+      transition: background 0.2s, transform 0.1s; line-height: 1.4;
     }
     .affiliate-btn:active { transform: scale(0.98); }
-    .affiliate-btn.clicked {
-      background: #16a34a;
-      cursor: default;
-    }
+    .affiliate-btn.clicked { background: #16a34a; }
+
     .click-time-display {
-      display: none;
-      margin-top: 10px;
-      padding: 10px 14px;
-      background: #f0fdf4;
-      border: 1px solid #86efac;
-      border-radius: 8px;
-      font-size: 0.85rem;
-      color: #15803d;
+      display: none; margin-top: 10px; padding: 10px 14px;
+      background: #f0fdf4; border: 1px solid #86efac;
+      border-radius: 8px; font-size: 0.85rem; color: #15803d;
     }
     .click-time-display.show { display: block; }
 
-    /* スクショアップロード */
     .upload-area {
-      border: 2px dashed #ccc;
-      border-radius: 10px;
-      padding: 24px 16px;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      position: relative;
+      border: 2px dashed #ccc; border-radius: 10px; padding: 24px 16px;
+      text-align: center; cursor: pointer;
+      transition: border-color 0.2s, background 0.2s; position: relative;
     }
     .upload-area:hover { border-color: #4f46e5; background: #f5f3ff; }
     .upload-area input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-      width: 100%;
-      height: 100%;
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
     }
     .upload-icon { font-size: 2rem; margin-bottom: 8px; }
     .upload-text { font-size: 0.9rem; color: #666; }
     .upload-text strong { color: #4f46e5; }
-    .preview-img {
-      display: none;
-      max-width: 100%;
-      border-radius: 8px;
-      margin-top: 12px;
-    }
+    .preview-img { display: none; max-width: 100%; border-radius: 8px; margin-top: 12px; }
     .preview-img.show { display: block; }
 
-    /* 送信ボタン */
     .submit-btn {
-      width: 100%;
-      padding: 16px;
-      background: #e53e3e;
-      color: #fff;
-      border: none;
-      border-radius: 10px;
-      font-size: 1.05rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
-      margin-top: 8px;
+      width: 100%; padding: 16px; background: #e53e3e; color: #fff; border: none;
+      border-radius: 10px; font-size: 1.05rem; font-weight: 700; cursor: pointer;
+      transition: background 0.2s, transform 0.1s; margin-top: 8px;
     }
     .submit-btn:hover { background: #c53030; }
     .submit-btn:active { transform: scale(0.98); }
     .submit-btn:disabled { background: #999; cursor: not-allowed; }
 
-    /* 完了画面 */
-    .success-screen {
-      display: none;
-      text-align: center;
-      padding: 40px 20px;
+    .notice {
+      background: #fefce8; border: 1px solid #fde047; border-radius: 8px;
+      padding: 12px 14px; font-size: 0.85rem; color: #854d0e; line-height: 1.6; margin-bottom: 14px;
     }
+
+    .success-screen { display: none; text-align: center; padding: 40px 20px; }
     .success-screen.show { display: block; }
     .success-icon { font-size: 4rem; margin-bottom: 16px; }
     .success-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; color: #15803d; }
@@ -190,52 +91,54 @@
     .form-wrap { display: block; }
     .form-wrap.hidden { display: none; }
 
-    .notice {
-      background: #fefce8;
-      border: 1px solid #fde047;
-      border-radius: 8px;
-      padding: 12px 14px;
-      font-size: 0.85rem;
-      color: #854d0e;
-      line-height: 1.6;
-      margin-bottom: 14px;
+    /* ローディング */
+    .loading {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 80px 20px; gap: 16px; color: #666;
     }
-    .sending-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.45);
-      z-index: 100;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      color: #fff;
-      font-size: 1.1rem;
-      font-weight: 600;
-      gap: 16px;
-    }
-    .sending-overlay.show { display: flex; }
+    .loading.hidden { display: none; }
     .spinner {
-      width: 40px; height: 40px;
-      border: 4px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
-      border-radius: 50%;
+      width: 40px; height: 40px; border: 4px solid #e0e0e0;
+      border-top-color: #4f46e5; border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .sending-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+      z-index: 100; align-items: center; justify-content: center;
+      flex-direction: column; color: #fff; font-size: 1.1rem; font-weight: 600; gap: 16px;
+    }
+    .sending-overlay.show { display: flex; }
+    .sending-overlay .spinner { border-color: rgba(255,255,255,0.3); border-top-color: #fff; }
+
+    .error-banner {
+      display: none; background: #fef2f2; border: 1px solid #fca5a5;
+      border-radius: 8px; padding: 14px; color: #991b1b; font-size: 0.9rem; line-height: 1.6;
+    }
+    .error-banner.show { display: block; }
   </style>
 </head>
 <body>
 <div class="container">
 
+  <!-- ローディング -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>読み込み中...</div>
+  </div>
+
+  <!-- エラー -->
+  <div class="error-banner" id="errorBanner">
+    設定の読み込みに失敗しました。時間をおいて再度お試しください。
+  </div>
+
   <!-- フォーム本体 -->
-  <div class="form-wrap" id="formWrap">
+  <div class="form-wrap hidden" id="formWrap">
     <h1 id="form-title"></h1>
     <p class="description" id="form-description"></p>
-
     <form id="mainForm" novalidate>
 
-      <!-- STEP 1: 基本情報入力 -->
       <div class="step">
         <div class="step-header">
           <div class="step-number">1</div>
@@ -244,7 +147,6 @@
         <div id="fields-container"></div>
       </div>
 
-      <!-- STEP 2: アフィリエイトリンク -->
       <div class="step">
         <div class="step-header">
           <div class="step-number">2</div>
@@ -254,22 +156,19 @@
           必ず下のボタンをタップしてリンクを開いてください。<br>
           別のリンクから作業しても記録されません。
         </div>
-        <a id="affiliateBtn" class="affiliate-btn" href="#" target="_blank" rel="noopener">
-          読み込み中...
-        </a>
+        <a id="affiliateBtn" class="affiliate-btn" href="#" target="_blank" rel="noopener">読み込み中...</a>
         <div class="click-time-display" id="clickTimeDisplay">
           ✅ クリック時刻を記録しました：<strong id="clickTimeText"></strong>
         </div>
         <input type="hidden" id="clickTime" name="clickTime">
       </div>
 
-      <!-- STEP 3: スクリーンショット -->
       <div class="step">
         <div class="step-header">
           <div class="step-number">3</div>
           <div class="step-title">作業完了画面のスクショを添付</div>
         </div>
-        <div class="upload-area" id="uploadArea">
+        <div class="upload-area">
           <input type="file" id="screenshotInput" accept="image/*" capture="environment">
           <div class="upload-icon">📷</div>
           <div class="upload-text">タップして<strong>スクショを選択</strong><br>または撮影</div>
@@ -277,9 +176,7 @@
         <img id="previewImg" class="preview-img" alt="プレビュー">
       </div>
 
-      <!-- 送信 -->
       <button type="submit" class="submit-btn" id="submitBtn">送信する</button>
-
     </form>
   </div>
 
@@ -292,7 +189,6 @@
 
 </div>
 
-<!-- 送信中オーバーレイ -->
 <div class="sending-overlay" id="sendingOverlay">
   <div class="spinner"></div>
   <div>送信中...</div>
@@ -300,81 +196,90 @@
 
 <script src="config.js"></script>
 <script>
-  // ---- 初期化 ----
-  document.getElementById("page-title").textContent = CONFIG.formTitle;
-  document.getElementById("form-title").textContent = CONFIG.formTitle;
-  document.getElementById("form-description").textContent = CONFIG.formDescription;
+  let GAS_URL = "";
 
-  // フォーム項目を動的生成
-  const container = document.getElementById("fields-container");
-  CONFIG.fields.forEach(field => {
-    const group = document.createElement("div");
-    group.className = "field-group";
-
-    const label = document.createElement("label");
-    label.htmlFor = field.id;
-    label.innerHTML = field.label + (field.required ? '<span class="required">*</span>' : '');
-    group.appendChild(label);
-
-    let input;
-    if (field.type === "textarea") {
-      input = document.createElement("textarea");
-      input.placeholder = field.placeholder || "";
-      input.rows = 3;
-    } else if (field.type === "select") {
-      input = document.createElement("select");
-      (field.options || []).forEach(opt => {
-        const o = document.createElement("option");
-        o.value = opt; o.textContent = opt;
-        input.appendChild(o);
-      });
-    } else {
-      input = document.createElement("input");
-      input.type = field.type || "text";
-      input.placeholder = field.placeholder || "";
+  // ---- 初期化：GASから設定を取得 ----
+  async function init() {
+    if (typeof CONFIG === "undefined" || !CONFIG.gasUrl) {
+      showError(); return;
     }
-    input.id = field.id;
-    input.name = field.id;
-    input.required = !!field.required;
-    group.appendChild(input);
-    container.appendChild(group);
-  });
+    GAS_URL = CONFIG.gasUrl;
 
-  // ---- アフィリエイトリンク ----
-  const affiliateBtn = document.getElementById("affiliateBtn");
-  affiliateBtn.href = CONFIG.affiliateUrl;
-  affiliateBtn.textContent = CONFIG.affiliateButtonText;
+    try {
+      const res    = await fetch(GAS_URL, { method: "GET" });
+      const config = await res.json();
+      buildForm(config);
+    } catch (e) {
+      showError();
+    }
+  }
 
-  affiliateBtn.addEventListener("click", function(e) {
-    const now = new Date();
-    const formatted = formatDatetime(now);
-    document.getElementById("clickTime").value = now.toISOString();
-    document.getElementById("clickTimeText").textContent = formatted;
-    document.getElementById("clickTimeDisplay").classList.add("show");
-    affiliateBtn.classList.add("clicked");
-    affiliateBtn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
-  });
+  function buildForm(config) {
+    document.title = config.formTitle || "フォーム";
+    document.getElementById("form-title").textContent       = config.formTitle       || "";
+    document.getElementById("form-description").textContent = config.formDescription || "";
 
-  // ---- スクリーンショットプレビュー ----
-  document.getElementById("screenshotInput").addEventListener("change", function() {
-    const file = this.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = document.getElementById("previewImg");
-      img.src = e.target.result;
-      img.classList.add("show");
-    };
-    reader.readAsDataURL(file);
-  });
+    // フォーム項目を生成
+    const container = document.getElementById("fields-container");
+    container.innerHTML = "";
+    (config.fields || []).forEach(field => {
+      const group = document.createElement("div");
+      group.className = "field-group";
+      const label = document.createElement("label");
+      label.htmlFor   = field.id;
+      label.innerHTML = field.label + (field.required ? '<span class="required">*</span>' : '');
+      group.appendChild(label);
 
-  // ---- フォーム送信 ----
-  document.getElementById("mainForm").addEventListener("submit", async function(e) {
+      let input;
+      if (field.type === "textarea") {
+        input = document.createElement("textarea");
+        input.rows = 3;
+      } else if (field.type === "select") {
+        input = document.createElement("select");
+        (field.options || []).forEach(opt => {
+          const o = document.createElement("option");
+          o.value = opt; o.textContent = opt;
+          input.appendChild(o);
+        });
+      } else {
+        input = document.createElement("input");
+        input.type = field.type || "text";
+      }
+      input.id          = field.id;
+      input.name        = field.id;
+      input.required    = !!field.required;
+      input.placeholder = field.placeholder || "";
+      group.appendChild(input);
+      container.appendChild(group);
+    });
+
+    // アフィリエイトボタン
+    const btn = document.getElementById("affiliateBtn");
+    btn.href        = config.affiliateUrl        || "#";
+    btn.textContent = config.affiliateButtonText || "アフィリエイトリンクを開く";
+    btn.addEventListener("click", () => {
+      const now       = new Date();
+      const formatted = formatDatetime(now);
+      document.getElementById("clickTime").value    = now.toISOString();
+      document.getElementById("clickTimeText").textContent = formatted;
+      document.getElementById("clickTimeDisplay").classList.add("show");
+      btn.classList.add("clicked");
+      btn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
+    });
+
+    // フォームを表示
+    document.getElementById("loading").classList.add("hidden");
+    document.getElementById("formWrap").classList.remove("hidden");
+
+    // 送信処理（configをクロージャで保持）
+    document.getElementById("mainForm").addEventListener("submit", e => handleSubmit(e, config));
+  }
+
+  async function handleSubmit(e, config) {
     e.preventDefault();
 
     // バリデーション
-    const fields = CONFIG.fields;
-    for (const field of fields) {
+    for (const field of (config.fields || [])) {
       if (field.required) {
         const val = document.getElementById(field.id)?.value?.trim();
         if (!val) {
@@ -394,25 +299,21 @@
       return;
     }
 
-    // 送信データ組み立て
+    // データ組み立て
     const formData = {};
-    fields.forEach(field => {
-      formData[field.id] = document.getElementById(field.id)?.value?.trim() || "";
+    (config.fields || []).forEach(f => {
+      formData[f.id] = document.getElementById(f.id)?.value?.trim() || "";
     });
-    formData.clickTime = document.getElementById("clickTime").value;
-    formData.submitTime = new Date().toISOString();
-
-    // スクショをBase64変換
-    const base64 = await fileToBase64(screenshotFile);
-    formData.screenshot = base64;
+    formData.clickTime      = document.getElementById("clickTime").value;
+    formData.submitTime     = new Date().toISOString();
+    formData.screenshot     = await fileToBase64(screenshotFile);
     formData.screenshotName = screenshotFile.name;
 
-    // 送信
     document.getElementById("sendingOverlay").classList.add("show");
     document.getElementById("submitBtn").disabled = true;
 
     try {
-      await fetch(CONFIG.gasUrl, {
+      await fetch(GAS_URL, {
         method: "POST",
         mode: "no-cors",
         headers: { "Content-Type": "application/json" },
@@ -426,27 +327,41 @@
       document.getElementById("submitBtn").disabled = false;
       alert("送信に失敗しました。通信環境を確認して再度お試しください。");
     }
+  }
+
+  function showError() {
+    document.getElementById("loading").classList.add("hidden");
+    document.getElementById("errorBanner").classList.add("show");
+  }
+
+  // スクショプレビュー
+  document.getElementById("screenshotInput").addEventListener("change", function() {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = document.getElementById("previewImg");
+      img.src = e.target.result;
+      img.classList.add("show");
+    };
+    reader.readAsDataURL(file);
   });
 
-  // ---- ユーティリティ ----
   function formatDatetime(date) {
-    const y = date.getFullYear();
-    const mo = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    const h = String(date.getHours()).padStart(2, "0");
-    const mi = String(date.getMinutes()).padStart(2, "0");
-    const s = String(date.getSeconds()).padStart(2, "0");
-    return `${y}/${mo}/${d} ${h}:${mi}:${s}`;
+    const p = n => String(n).padStart(2, "0");
+    return `${date.getFullYear()}/${p(date.getMonth()+1)}/${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
   }
 
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
+      reader.onload  = () => resolve(reader.result);
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
   }
+
+  init();
 </script>
 </body>
 </html>
