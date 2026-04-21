@@ -15,7 +15,7 @@ const CONFIG = {
   // Google Apps Script の URL
   // GASを公開したらここに貼り付ける
   // =============================
-  gasUrl: "https://script.google.com/macros/s/AKfycbzAxPvvIHvR-z8iYbZNDSIz4ZcJV4q3zFwTSC3SFsndeT0cmeVqiGa8VX9nqFRXhpYK/exec",
+  gasUrl: "https://script.google.com/macros/s/AKfycbxkKifypNW8mA2pIS1YyI0fon3mXBNO8rvu8sgkWfpNPE64K8dDw2o2-89W1UXev4Wc/exec",
 
   // =============================
   // フォーム項目の設定
