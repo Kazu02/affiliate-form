@@ -205,9 +205,14 @@
     }
     GAS_URL = CONFIG.gasUrl;
 
+    // URLパラメータ ?form=xxx を取得
+    const formParam = new URLSearchParams(window.location.search).get("form");
+    const url       = formParam ? GAS_URL + "?form=" + encodeURIComponent(formParam) : GAS_URL;
+
     try {
-      const res    = await fetch(GAS_URL, { method: "GET" });
+      const res    = await fetch(url, { method: "GET" });
       const config = await res.json();
+      if (config.error) { showError(); return; }
       buildForm(config);
     } catch (e) {
       showError();
@@ -306,6 +311,7 @@
     });
     formData.clickTime      = document.getElementById("clickTime").value;
     formData.submitTime     = new Date().toISOString();
+    formData.formName       = config.formName || "";
     formData.screenshot     = await fileToBase64(screenshotFile);
     formData.screenshotName = screenshotFile.name;
 
