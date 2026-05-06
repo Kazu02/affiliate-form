@@ -18,6 +18,11 @@ const AGENCY_FOLDER       = "代理店スプシ"; // Drive保管フォルダ名
 const AGENCY_PATTERN      = /^[a-zA-Z0-9_]+$/;
 const AGENCY_PROP_PREFIX  = "AGENCY_SS_";   // ScriptProperties キー prefix
 
+// フォーム名（表示用・日本語）
+const FORM_NAME_KEY     = "フォーム名";    // 設定シートのキー
+const FORM_CODE_HEADER  = "フォーム記号";  // 回答データG1ヘッダー
+const FORM_CODE_PATTERN = /^[a-zA-Z0-9_]+$/;
+
 // ---- GET: フォーム設定を返す ----
 function doGet(e) {
   try {
@@ -157,10 +162,11 @@ function getFirstFormName(ss) {
 }
 
 // ---- 設定シートの初期データ ----
-function initConfigSheet(sheet, title) {
-  title = title || "申請フォーム";
-  const formName = sheet.getName().replace(CONFIG_PREFIX, "");
-  const formUrl  = FORM_BASE_URL + "?form=" + encodeURIComponent(formName);
+function initConfigSheet(sheet, title, displayName) {
+  title       = title || "申請フォーム";
+  displayName = displayName || "";
+  const formCode = sheet.getName().replace(CONFIG_PREFIX, "");
+  const formUrl  = FORM_BASE_URL + "?form=" + encodeURIComponent(formCode);
 
   const data = [
     ["フォームタイトル",    title],
@@ -169,7 +175,7 @@ function initConfigSheet(sheet, title) {
     ["ボタンテキスト",      "アフィリエイトリンクを開く（必ずここから！）"],
     ["フォームURL（自動）", formUrl],
     [AGENCY_KEY,            ""],
-    ["", ""],
+    [FORM_NAME_KEY,         displayName],
     ["＝＝ フォーム項目（行を追加・削除で変更可） ＝＝", ""],
     ["フィールドID", "ラベル", "タイプ(text/textarea/select)", "必須(TRUE/FALSE)", "プレースホルダー"],
     ["name",     "お名前",   "text", "TRUE", "例：山田太郎"],
@@ -187,6 +193,10 @@ function initConfigSheet(sheet, title) {
   // 代理店コード行（6行目）
   const agencyRange = sheet.getRange(6, 1, 1, 2);
   agencyRange.setBackground("#e0f2fe").setFontColor("#075985").setFontWeight("bold");
+
+  // フォーム名行（7行目・表示用）
+  const displayRange = sheet.getRange(7, 1, 1, 2);
+  displayRange.setBackground("#fff3e0").setFontColor("#e65100").setFontWeight("bold");
 
   // フォーム項目ヘッダー行（9行目）
   const headerRange = sheet.getRange(9, 1, 1, 5);
@@ -225,10 +235,11 @@ function readConfig(ss, formName) {
   }
 
   const config = {
-    formTitle: "", formDescription: "", affiliateUrl: "", affiliateButtonText: "", fields: []
+    formTitle: "", formDisplayName: "", formDescription: "", affiliateUrl: "", affiliateButtonText: "", fields: []
   };
   const keyMap = {
     "フォームタイトル":  "formTitle",
+    [FORM_NAME_KEY]:     "formDisplayName",
     "フォーム説明文":    "formDescription",
     "アフィリエイトURL": "affiliateUrl",
     "ボタンテキスト":    "affiliateButtonText"
@@ -264,7 +275,7 @@ function readConfig(ss, formName) {
 // ---- ヘッダー行を組み立て ----
 function buildHeaders(config) {
   const fieldLabels = config.fields.map(f => f.label);
-  return ["フォーム名", "受信日時", "クリック日時", "送信日時", ...fieldLabels, "スクショURL", "承認"];
+  return [FORM_CODE_HEADER, "受信日時", "クリック日時", "送信日時", ...fieldLabels, "スクショURL", "承認"];
 }
 
 // ---- データ行を組み立て ----
@@ -311,12 +322,16 @@ function formatJSTforFilename(date) {
 function onOpen() {
   updateAllFormUrls();
   initAllAnswerHeaders();
+  migrateAddFormNameRow();
   updateManagementSheet();
+  ensureDailyReportTrigger();
   SpreadsheetApp.getUi().createMenu("フォーム管理")
     .addItem("新規フォーム作成",       "showCreateFormDialog")
     .addItem("管理シートを更新",       "updateManagementSheet")
     .addItem("代理店割り当て更新",     "rebuildAllAgencySpreadsheets")
     .addItem("旧共有SSをゴミ箱へ",     "deleteAllOldSharingSpreadsheets")
+    .addSeparator()
+    .addItem("日次レポート（テスト送信）", "dailyReport")
     .addToUi();
 }
 
@@ -326,9 +341,17 @@ function initAllAnswerHeaders() {
   ss.getSheets().forEach(sheet => {
     const name = sheet.getName();
     if (!name.startsWith(CONFIG_PREFIX)) return;
-    if (sheet.getRange(1, ANSWER_START_COL).getValue()) return;
-    const formName = name.replace(CONFIG_PREFIX, "");
-    const config   = readConfig(ss, formName);
+    const g1 = sheet.getRange(1, ANSWER_START_COL).getValue();
+
+    // 旧ヘッダー「フォーム名」→「フォーム記号」へ移行
+    if (g1 === "フォーム名") {
+      sheet.getRange(1, ANSWER_START_COL).setValue(FORM_CODE_HEADER);
+      return;
+    }
+    if (g1) return;
+
+    const formCode = name.replace(CONFIG_PREFIX, "");
+    const config   = readConfig(ss, formCode);
     const headers  = buildHeaders(config);
     const range    = sheet.getRange(1, ANSWER_START_COL, 1, headers.length);
     range.setValues([headers]);
@@ -336,6 +359,50 @@ function initAllAnswerHeaders() {
     range.setBackground("#4f46e5");
     range.setFontColor("#ffffff");
     sheet.setFrozenRows(1);
+  });
+}
+
+// ---- 設定シートからフォーム表示名を取得（無ければformCodeを返す）----
+function getFormDisplayName(sheet, formCode) {
+  const values = sheet.getDataRange().getValues();
+  for (const row of values) {
+    if (String(row[0]) === FORM_NAME_KEY) {
+      const v = String(row[1] || "").trim();
+      if (v) return v;
+      break;
+    }
+  }
+  return formCode;
+}
+
+// ---- 既存設定シートに FORM_NAME_KEY 行を補完（行シフトなし） ----
+function migrateAddFormNameRow() {
+  const ss = getOrCreateSpreadsheet();
+  ss.getSheets().forEach(sheet => {
+    const name = sheet.getName();
+    if (!name.startsWith(CONFIG_PREFIX)) return;
+    const values = sheet.getDataRange().getValues();
+
+    // 既に行があればスキップ
+    for (const row of values) {
+      if (String(row[0]) === FORM_NAME_KEY) return;
+    }
+
+    // 代理店コード行の直下が空白なら、その行に書き込む（行シフトなし）
+    let agencyRowIdx = -1;
+    for (let i = 0; i < values.length; i++) {
+      if (String(values[i][0]) === AGENCY_KEY) { agencyRowIdx = i; break; }
+    }
+    if (agencyRowIdx < 0) return;
+
+    const candidateIdx = agencyRowIdx + 1;
+    if (candidateIdx >= values.length) return;
+    const candidate = values[candidateIdx];
+    if (String(candidate[0]) !== "" || String(candidate[1]) !== "") return;
+
+    const range = sheet.getRange(candidateIdx + 1, 1, 1, 2);
+    range.setValues([[FORM_NAME_KEY, ""]]);
+    range.setBackground("#fff3e0").setFontColor("#e65100").setFontWeight("bold");
   });
 }
 
@@ -373,6 +440,7 @@ function installTrigger() {
   });
   ScriptApp.newTrigger("onOpen").forSpreadsheet(ss).onOpen().create();
   installMainEditTrigger();
+  ensureDailyReportTrigger();
 }
 
 // ---- スプレッドシートURLの確認用 ----
@@ -502,6 +570,9 @@ function syncFormSheetToAgency(ss, agencySS, formName) {
     if (key === AGENCY_KEY) {
       agencySheet.getRange(i + 1, 1, 1, 2).setBackground("#e0f2fe").setFontColor("#075985").setFontWeight("bold");
     }
+    if (key === FORM_NAME_KEY) {
+      agencySheet.getRange(i + 1, 1, 1, 2).setBackground("#fff3e0").setFontColor("#e65100").setFontWeight("bold");
+    }
     if (key === "フィールドID") {
       agencySheet.getRange(i + 1, 1, 1, 5).setFontWeight("bold").setBackground("#e8eaf6").setFontColor("#1a237e");
     }
@@ -587,7 +658,7 @@ function rebuildAllAgencySpreadsheets() {
 }
 
 // ---- 代理店SSの管理シートを更新 ----
-function updateAgencyManagementSheet(agencySS, code, formNames, mainSS) {
+function updateAgencyManagementSheet(agencySS, code, formCodes, mainSS) {
   let mgSheet = agencySS.getSheetByName(MANAGEMENT_SHEET);
   if (!mgSheet) {
     mgSheet = agencySS.insertSheet(MANAGEMENT_SHEET, 0);
@@ -598,20 +669,22 @@ function updateAgencyManagementSheet(agencySS, code, formNames, mainSS) {
   mgSheet.clearContents();
   mgSheet.clearFormats();
 
-  const headers = ["フォーム名", "フォームURL", "代理店コード", "回答数", "最終回答日時"];
+  const headers = ["フォーム記号", "フォーム名", "フォームURL", "代理店コード", "回答数", "最終回答日時"];
   const hRange  = mgSheet.getRange(1, 1, 1, headers.length);
   hRange.setValues([headers]);
   hRange.setFontWeight("bold").setBackground("#4f46e5").setFontColor("#ffffff");
   mgSheet.setFrozenRows(1);
 
   const rows = [];
-  formNames.forEach(formName => {
-    const sheet = mainSS.getSheetByName(CONFIG_PREFIX + formName);
+  formCodes.forEach(formCode => {
+    const sheet = mainSS.getSheetByName(CONFIG_PREFIX + formCode);
     if (!sheet) return;
     const values = sheet.getDataRange().getValues();
-    let formUrl = "";
+    let formUrl     = "";
+    let displayName = "";
     for (const row of values) {
-      if (String(row[0]).includes("フォームURL")) formUrl = String(row[1] || "");
+      if (String(row[0]).includes("フォームURL")) formUrl     = String(row[1] || "");
+      if (String(row[0]) === FORM_NAME_KEY)      displayName = String(row[1] || "");
     }
 
     let answerCount  = 0;
@@ -630,25 +703,26 @@ function updateAgencyManagementSheet(agencySS, code, formNames, mainSS) {
         }
       });
     }
-    rows.push([formName, formUrl, code, answerCount, lastAnswerAt]);
+    rows.push([formCode, displayName, formUrl, code, answerCount, lastAnswerAt]);
   });
 
   if (rows.length > 0) {
     mgSheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
     rows.forEach((row, i) => {
-      if (row[1]) mgSheet.getRange(i + 2, 2).setFontColor("#1155cc").setFontStyle("italic");
-      if (row[2]) mgSheet.getRange(i + 2, 3).setFontColor("#075985").setFontWeight("bold");
+      if (row[2]) mgSheet.getRange(i + 2, 3).setFontColor("#1155cc").setFontStyle("italic");
+      if (row[3]) mgSheet.getRange(i + 2, 4).setFontColor("#075985").setFontWeight("bold");
     });
     rows.forEach((_, i) => {
       if (i % 2 === 1) mgSheet.getRange(i + 2, 1, 1, headers.length).setBackground("#f3f4f6");
     });
   }
 
-  mgSheet.setColumnWidth(1, 160);
-  mgSheet.setColumnWidth(2, 360);
-  mgSheet.setColumnWidth(3, 120);
-  mgSheet.setColumnWidth(4, 80);
-  mgSheet.setColumnWidth(5, 160);
+  mgSheet.setColumnWidth(1, 120);
+  mgSheet.setColumnWidth(2, 200);
+  mgSheet.setColumnWidth(3, 360);
+  mgSheet.setColumnWidth(4, 120);
+  mgSheet.setColumnWidth(5, 80);
+  mgSheet.setColumnWidth(6, 160);
 }
 
 // ---- 代理店SS用 onEditトリガーをインストール ----
@@ -697,11 +771,18 @@ function installMainEditTrigger() {
   ScriptApp.newTrigger("onMainEdit").forSpreadsheet(ss).onEdit().create();
 }
 
-// ---- メインSS側で承認列編集 → 代理店SSに反映 ----
+// ---- メインSS側で承認列・管理シート編集 → 反映 ----
 function onMainEdit(e) {
   try {
     const editedSheet = e.source.getActiveSheet();
     const sheetName   = editedSheet.getName();
+
+    // 管理シートでフォーム名/代理店コードを編集 → 設定シートへ反映
+    if (sheetName === MANAGEMENT_SHEET) {
+      handleManagementSheetEdit(e, editedSheet);
+      return;
+    }
+
     if (!sheetName.startsWith(CONFIG_PREFIX)) return;
 
     const row = e.range.getRow();
@@ -716,14 +797,59 @@ function onMainEdit(e) {
     const receivedAtOff = headers.indexOf("受信日時");
     const receivedAt    = String(editedSheet.getRange(row, ANSWER_START_COL + receivedAtOff).getValue());
 
-    const formName = sheetName.replace(CONFIG_PREFIX, "");
+    const formCode = sheetName.replace(CONFIG_PREFIX, "");
     let code;
     try { code = getAgencyCode(editedSheet); }
     catch (err) { return; }
     const agencySS = getOrCreateAgencySpreadsheet(code);
-    syncApprovalToAgency(agencySS, formName, receivedAt, newValue);
+    syncApprovalToAgency(agencySS, formCode, receivedAt, newValue);
   } catch (err) {
     Logger.log("onMainEdit error: " + err);
+  }
+}
+
+// ---- 管理シートでフォーム名/代理店コードを編集 → 設定シートへ反映 ----
+function handleManagementSheetEdit(e, mgSheet) {
+  const row = e.range.getRow();
+  if (row <= 1) return;
+
+  const lastCol = mgSheet.getLastColumn();
+  const col     = e.range.getColumn();
+  if (col > lastCol) return;
+
+  const headers    = mgSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const headerName = String(headers[col - 1] || "");
+
+  // フォーム名・代理店コードのみ反映
+  if (headerName !== FORM_NAME_KEY && headerName !== AGENCY_KEY) return;
+
+  const formCode = String(mgSheet.getRange(row, 1).getValue() || "").trim();
+  if (!formCode) return;
+
+  const ss          = getOrCreateSpreadsheet();
+  const configSheet = ss.getSheetByName(CONFIG_PREFIX + formCode);
+  if (!configSheet) return;
+
+  const newValue = String(e.range.getValue() || "").trim();
+
+  if (headerName === AGENCY_KEY) {
+    if (newValue && !AGENCY_PATTERN.test(newValue)) {
+      Logger.log("無効な代理店コード: " + newValue);
+      return;
+    }
+  }
+
+  setConfigValue(configSheet, headerName, newValue);
+}
+
+// ---- 設定シートのキー行に値を書き込む（無ければ何もしない）----
+function setConfigValue(sheet, key, value) {
+  const values = sheet.getDataRange().getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0]) === key) {
+      sheet.getRange(i + 1, 2).setValue(value);
+      return;
+    }
   }
 }
 
@@ -841,7 +967,7 @@ function updateManagementSheet() {
   mgSheet.clearContents();
   mgSheet.clearFormats();
 
-  const headers = ["フォーム名", "フォームURL", "代理店コード", "回答数", "最終回答日時"];
+  const headers = ["フォーム記号", "フォーム名", "フォームURL", "代理店コード", "回答数", "最終回答日時"];
   const hRange  = mgSheet.getRange(1, 1, 1, headers.length);
   hRange.setValues([headers]);
   hRange.setFontWeight("bold").setBackground("#4f46e5").setFontColor("#ffffff");
@@ -851,14 +977,16 @@ function updateManagementSheet() {
   ss.getSheets().forEach(sheet => {
     const name = sheet.getName();
     if (!name.startsWith(CONFIG_PREFIX)) return;
-    const formName = name.replace(CONFIG_PREFIX, "");
+    const formCode = name.replace(CONFIG_PREFIX, "");
     const values   = sheet.getDataRange().getValues();
 
-    let formUrl    = "";
-    let agencyCode = "";
+    let formUrl     = "";
+    let agencyCode  = "";
+    let displayName = "";
     for (const row of values) {
-      if (String(row[0]).includes("フォームURL")) formUrl    = String(row[1] || "");
-      if (String(row[0]) === AGENCY_KEY)         agencyCode = String(row[1] || "");
+      if (String(row[0]).includes("フォームURL")) formUrl     = String(row[1] || "");
+      if (String(row[0]) === AGENCY_KEY)         agencyCode  = String(row[1] || "");
+      if (String(row[0]) === FORM_NAME_KEY)      displayName = String(row[1] || "");
     }
 
     let answerCount  = 0;
@@ -877,25 +1005,26 @@ function updateManagementSheet() {
         }
       });
     }
-    rows.push([formName, formUrl, agencyCode, answerCount, lastAnswerAt]);
+    rows.push([formCode, displayName, formUrl, agencyCode, answerCount, lastAnswerAt]);
   });
 
   if (rows.length > 0) {
     mgSheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
     rows.forEach((row, i) => {
-      if (row[1]) mgSheet.getRange(i + 2, 2).setFontColor("#1155cc").setFontStyle("italic");
-      if (row[2]) mgSheet.getRange(i + 2, 3).setFontColor("#075985").setFontWeight("bold");
+      if (row[2]) mgSheet.getRange(i + 2, 3).setFontColor("#1155cc").setFontStyle("italic");
+      if (row[3]) mgSheet.getRange(i + 2, 4).setFontColor("#075985").setFontWeight("bold");
     });
     rows.forEach((_, i) => {
       if (i % 2 === 1) mgSheet.getRange(i + 2, 1, 1, headers.length).setBackground("#f3f4f6");
     });
   }
 
-  mgSheet.setColumnWidth(1, 160);
-  mgSheet.setColumnWidth(2, 360);
-  mgSheet.setColumnWidth(3, 120);
-  mgSheet.setColumnWidth(4, 80);
-  mgSheet.setColumnWidth(5, 160);
+  mgSheet.setColumnWidth(1, 120);
+  mgSheet.setColumnWidth(2, 200);
+  mgSheet.setColumnWidth(3, 360);
+  mgSheet.setColumnWidth(4, 120);
+  mgSheet.setColumnWidth(5, 80);
+  mgSheet.setColumnWidth(6, 160);
 }
 
 // =============================================
@@ -930,8 +1059,9 @@ function notifyLineGroup(message) {
 }
 
 // ---- 通知メッセージを組み立て ----
-function buildLineMessage(config, rowData, formName) {
-  const lines = ["【新規申請】" + (config.formTitle || formName)];
+function buildLineMessage(config, rowData, formCode) {
+  const headline = config.formDisplayName || config.formTitle || formCode;
+  const lines = ["【新規申請】" + headline];
   lines.push("受信日時: " + rowData[1]);
   config.fields.forEach((field, i) => {
     const val = rowData[4 + i];
@@ -948,6 +1078,98 @@ function buildLineMessage(config, rowData, formName) {
 function setLineGroupId(groupId) {
   PropertiesService.getScriptProperties().setProperty("LINE_GROUP_ID", groupId);
   Logger.log("LINE_GROUP_ID を設定しました: " + groupId);
+}
+
+// =============================================
+// 日次レポート（毎朝9時に前日結果をLINE通知）
+// =============================================
+
+// ---- 前日のJST日付文字列を返す（yyyy/MM/dd） ----
+function getYesterdayJSTDateStr() {
+  const now          = new Date();
+  const jstNow       = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const jstYesterday = new Date(jstNow.getTime() - 24 * 60 * 60 * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return jstYesterday.getUTCFullYear() + "/" +
+         p(jstYesterday.getUTCMonth() + 1) + "/" +
+         p(jstYesterday.getUTCDate());
+}
+
+// ---- セル値（Date or 文字列）からJST日付文字列「yyyy/MM/dd」を抽出 ----
+function toJSTDateStr(value) {
+  if (!value) return "";
+  if (value instanceof Date) {
+    const jst = new Date(value.getTime() + 9 * 60 * 60 * 1000);
+    const p   = n => String(n).padStart(2, "0");
+    return jst.getUTCFullYear() + "/" +
+           p(jst.getUTCMonth() + 1) + "/" +
+           p(jst.getUTCDate());
+  }
+  return String(value).substring(0, 10);
+}
+
+// ---- 日次レポート本体 ----
+function dailyReport() {
+  const ss        = getOrCreateSpreadsheet();
+  const yesterday = getYesterdayJSTDateStr();
+
+  const reports = [];
+  let total = 0;
+
+  ss.getSheets().forEach(sheet => {
+    const name = sheet.getName();
+    if (!name.startsWith(CONFIG_PREFIX)) return;
+    const formCode    = name.replace(CONFIG_PREFIX, "");
+    const displayName = getFormDisplayName(sheet, formCode);
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    let count = 0;
+    if (lastRow >= 2 && lastCol >= ANSWER_START_COL) {
+      const headers = sheet.getRange(1, ANSWER_START_COL, 1, lastCol - ANSWER_START_COL + 1).getValues()[0];
+      const rtIdx   = headers.indexOf("受信日時");
+      if (rtIdx >= 0) {
+        const data = sheet.getRange(2, ANSWER_START_COL + rtIdx, lastRow - 1, 1).getValues();
+        data.forEach(row => {
+          if (toJSTDateStr(row[0]) === yesterday) count++;
+        });
+      }
+    }
+    if (count > 0) {
+      reports.push("・" + displayName + ": " + count + "件");
+      total += count;
+    }
+  });
+
+  let message;
+  if (reports.length === 0) {
+    message = "【日次レポート】" + yesterday + "\n\n申請はありませんでした。";
+  } else {
+    message = "【日次レポート】" + yesterday + "\n\n"
+            + reports.join("\n")
+            + "\n\n合計: " + total + "件";
+  }
+
+  notifyLineGroup(message);
+  Logger.log(message);
+}
+
+// ---- 日次レポート用トリガー設置（無ければ作成） ----
+function ensureDailyReportTrigger() {
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    for (const t of triggers) {
+      if (t.getHandlerFunction() === "dailyReport") return;
+    }
+    ScriptApp.newTrigger("dailyReport")
+      .timeBased()
+      .everyDays(1)
+      .atHour(9)
+      .create();
+    Logger.log("dailyReport トリガーを設置しました（毎朝9時JST）");
+  } catch (e) {
+    Logger.log("dailyReport トリガー設置失敗: " + e);
+  }
 }
 
 // ---- LINE通知テスト（GASエディタから手動実行）----
@@ -981,12 +1203,16 @@ function showCreateFormDialog() {
 }
 
 function createFormFromDialog(data) {
-  const formName     = String(data.formName     || "").trim();
-  const formTitle    = String(data.formTitle    || "").trim();
-  const affiliateUrl = String(data.affiliateUrl || "").trim();
-  const agencyCode   = String(data.agencyCode   || "").trim();
+  const formCode        = String(data.formCode        || data.formName || "").trim();
+  const formDisplayName = String(data.formDisplayName || "").trim();
+  const formTitle       = String(data.formTitle       || "").trim();
+  const affiliateUrl    = String(data.affiliateUrl    || "").trim();
+  const agencyCode      = String(data.agencyCode      || "").trim();
 
-  if (!formName)     throw new Error("フォーム名を入力してください。");
+  if (!formCode)     throw new Error("フォーム記号を入力してください。");
+  if (!FORM_CODE_PATTERN.test(formCode)) {
+    throw new Error("フォーム記号は半角英数字とアンダースコアのみ使用できます。");
+  }
   if (!formTitle)    throw new Error("フォームタイトルを入力してください。");
   if (!affiliateUrl) throw new Error("アフィリエイトURLを入力してください。");
   if (agencyCode && !AGENCY_PATTERN.test(agencyCode)) {
@@ -994,12 +1220,12 @@ function createFormFromDialog(data) {
   }
 
   const ss = getOrCreateSpreadsheet();
-  if (ss.getSheetByName(CONFIG_PREFIX + formName)) {
-    throw new Error("「" + formName + "」は既に存在します。");
+  if (ss.getSheetByName(CONFIG_PREFIX + formCode)) {
+    throw new Error("「" + formCode + "」は既に存在します。");
   }
 
-  const configSheet = ss.insertSheet(CONFIG_PREFIX + formName);
-  initConfigSheet(configSheet, formTitle);
+  const configSheet = ss.insertSheet(CONFIG_PREFIX + formCode);
+  initConfigSheet(configSheet, formTitle, formDisplayName);
 
   // アフィリエイトURL・代理店コード書き込み
   const values = configSheet.getDataRange().getValues();
@@ -1013,7 +1239,7 @@ function createFormFromDialog(data) {
   }
 
   // 回答ヘッダー初期化
-  const config = readConfig(ss, formName);
+  const config = readConfig(ss, formCode);
   const hdrs   = buildHeaders(config);
   const hRange = configSheet.getRange(1, ANSWER_START_COL, 1, hdrs.length);
   hRange.setValues([hdrs]);
@@ -1023,22 +1249,26 @@ function createFormFromDialog(data) {
   // 代理店SSに同期
   const code     = agencyCode || AGENCY_DEFAULT;
   const agencySS = getOrCreateAgencySpreadsheet(code);
-  syncFormSheetToAgency(ss, agencySS, formName);
+  syncFormSheetToAgency(ss, agencySS, formCode);
   // 代理店SSの管理シートも更新
-  const formNames = [];
+  const formCodes = [];
   ss.getSheets().forEach(sheet => {
     const name = sheet.getName();
     if (!name.startsWith(CONFIG_PREFIX)) return;
     try {
       if (getAgencyCode(sheet) === code) {
-        formNames.push(name.replace(CONFIG_PREFIX, ""));
+        formCodes.push(name.replace(CONFIG_PREFIX, ""));
       }
     } catch (e) {}
   });
-  updateAgencyManagementSheet(agencySS, code, formNames, ss);
+  updateAgencyManagementSheet(agencySS, code, formCodes, ss);
 
   // メインSSの管理シート更新
   updateManagementSheet();
 
-  return { formName: formName, formUrl: FORM_BASE_URL + "?form=" + encodeURIComponent(formName) };
+  return {
+    formCode: formCode,
+    formDisplayName: formDisplayName,
+    formUrl: FORM_BASE_URL + "?form=" + encodeURIComponent(formCode)
+  };
 }
