@@ -287,11 +287,33 @@ function buildRow(data, config, screenshotUrl, formName) {
   return [formName, receivedAt, clickAt, submitAt, ...fieldValues, screenshotUrl, ""];
 }
 
+// ---- スクショ保存フォルダをIDで取得（IDが無効なら名前検索してID保存） ----
+function getSaveFolder() {
+  const props   = PropertiesService.getScriptProperties();
+  const savedId = props.getProperty("SCREENSHOT_FOLDER_ID");
+  if (savedId) {
+    try { return DriveApp.getFolderById(savedId); } catch (e) {
+      props.deleteProperty("SCREENSHOT_FOLDER_ID");
+    }
+  }
+  const folders = DriveApp.getFoldersByName(DRIVE_FOLDER);
+  const folder  = folders.hasNext() ? folders.next() : DriveApp.createFolder(DRIVE_FOLDER);
+  props.setProperty("SCREENSHOT_FOLDER_ID", folder.getId());
+  return folder;
+}
+
+// ---- スクショ保存フォルダを手動で再登録（メニューから実行） ----
+function resetScreenshotFolder() {
+  const props   = PropertiesService.getScriptProperties();
+  props.deleteProperty("SCREENSHOT_FOLDER_ID");
+  const folder = getSaveFolder();
+  SpreadsheetApp.getUi().alert("スクショフォルダを再登録しました。\nフォルダ名: " + folder.getName() + "\nID: " + folder.getId());
+}
+
 // ---- スクショ保存 ----
 function saveScreenshot(base64Data, fileName, data) {
   try {
-    const folders = DriveApp.getFoldersByName(DRIVE_FOLDER);
-    const folder  = folders.hasNext() ? folders.next() : DriveApp.createFolder(DRIVE_FOLDER);
+    const folder  = getSaveFolder();
     const base64  = base64Data.split(",")[1];
     const mime    = base64Data.split(";")[0].split(":")[1];
     const blob    = Utilities.newBlob(Utilities.base64Decode(base64), mime, fileName);
@@ -332,6 +354,8 @@ function onOpen() {
     .addItem("旧共有SSをゴミ箱へ",     "deleteAllOldSharingSpreadsheets")
     .addSeparator()
     .addItem("日次レポート（テスト送信）", "dailyReport")
+    .addSeparator()
+    .addItem("スクショフォルダを再登録",   "resetScreenshotFolder")
     .addToUi();
 }
 
@@ -1173,6 +1197,12 @@ function ensureDailyReportTrigger() {
 }
 
 // ---- LINE通知テスト（GASエディタから手動実行）----
+// ---- OAuth スコープ承認用（GASエディタから手動実行） ----
+function authorizeScopes() {
+  DriveApp.getRootFolder();
+  Logger.log("Drive スコープ承認済み");
+}
+
 function testLineNotification() {
   const props   = PropertiesService.getScriptProperties();
   const token   = props.getProperty("LINE_CHANNEL_TOKEN");
