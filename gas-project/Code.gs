@@ -321,7 +321,11 @@ function saveScreenshot(base64Data, fileName, data) {
     const dt      = data.clickTime ? formatJSTforFilename(new Date(data.clickTime)) : formatJSTforFilename(new Date());
     blob.setName(`${dt}_${name}_${fileName || "screenshot"}`);
     const file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (e) {
+      Logger.log("setSharing 失敗（無視して続行）: " + e);
+    }
     return file.getUrl();
   } catch (err) {
     return "保存エラー: " + err.toString();
