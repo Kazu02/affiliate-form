@@ -1,0 +1,5 @@
+# MCP tool artifacts (screenshots / console logs)
+.playwright-mcp/
+
+# Local clasp account marker (machine-specific)
+.clasp-account

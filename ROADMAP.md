@@ -1,18 +1,37 @@
-﻿# Roadmap
+# Roadmap
+
+## Completed
+
+- フォーム受信・回答記録・LINE通知の基本フロー
+- 代理店SS分離・代理店コードによるフォーム振り分け
+- 管理シート（フォーム一覧・回答数・最終回答日時）
+- 自社フォームの紹介者フィールドをselectに自動変換
+- 30件クエスト（4案件×30件、2026/05末）の進捗報告
+- 日次レポート（前日集計のLINE通知、毎朝8時）
+- 回答ヘッダー同期機能（fixAnswerHeaders）
+- 顧客管理シートの自動作成・既存データインポート
+- 150件クエスト実装（全自社フォーム合計、2026/06末、3名50件ノルマ）
+- 広告主成果管理シートへのリアルタイム書き込み
+- 広告主シートへの既存データ一括インポート（202604・202605・202606）
+- 広告主シートの列構成確定（A=受信日時, B=広告名, C=お名前, D=紹介者名, E=スクショURL, F=トラッキング漏れ[広告主管理], G=承認[GAS管理]）
+- 承認区分（アフィリエイト管理の⭕️）をG列チェックボックスにインポート
+- 月別シート自動作成（createAdvertiserMonthSheet）
 
 ## Current
 
-- Import durable context from the existing project chat using `CHAT_HANDOFF_PROMPT.md`.
-- Confirm the project purpose, current state, and operational constraints.
+- **デプロイ待ち（ブロック中）**: 新案件を顧客管理に反映する `syncCustomerManagementCases` ＋ upsert 自動列追加を実装済み（構文OK）。clasp が 3s3.cube になっており、shinhogle へ切替後に `clasp push`→`clasp redeploy AKfycb...UTuQLlfvE3hiWkYrLBlr`。反映後、メニュー「顧客管理の案件列を同期」を1回実行して既存シートへ不足案件列を追加。
 
 ## Next
 
-- Define the next actionable task in `CODEX_TASK.md` when implementation is requested.
+- 特定の次タスクは未定。ユーザーからの新要件を待つ。
+- 必要になれば `CODEX_TASK.md` に実装契約を定義する。
 
 ## Blockers
 
-- Existing conversation context has not yet been summarized into the project memory files.
+- なし
 
 ## Backlog
 
-- Keep this section updated as future work is identified.
+- 広告主シートへのリアルタイム書き込み: 現在は承認=false固定。承認状態をリアルタイムで反映する仕組みは未実装（インポートで対応中）。
+- 顧客管理シートの電話番号・顧客ID列は将来追加予定（ユーザー言及あり）。
+- 150件クエストは2026/06末で終了予定。次クエストの定義は未定。
