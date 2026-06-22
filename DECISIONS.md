@@ -59,3 +59,13 @@
   - `syncCustomerManagementCases()` を新設（メニュー「顧客管理の案件列を同期」）。各営業マンシートのヘッダーと最新案件（`getJishaForms()`）を突き合わせ、不足案件列を書式・幅・入力規則付きで追加。
   - `upsertCustomerRow` を改修し、案件列が無ければ自動追加（`addCaseColumnToSheet_`）してから書き込む。これで以後の新案件はフォーム送信時に自動反映される。
   - デプロイは shinhogle@gmail.com で `clasp push`→`clasp redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr`。誤アカウント（3s3.cube）でのデプロイは executeAs の都合で本番破壊につながるため厳禁。
+
+## 2026-06-22: 入力途中保存と紹介者固定リンクを全案件共通にする
+
+- Decision: 静的フォーム側で入力途中データを `localStorage` に自動保存し、`?form=<フォーム記号>-s/-m/-i` の紹介者固定リンクを全フォーム共通で解釈する。
+- Reason: ユーザーがアフィリエイトリンク先で10分以上作業して戻った際に入力内容が消える問題と、紹介者選択ミスの多発を防ぐため。
+- Consequence:
+  - `-s` は `菅原貴博`、`-m` は `村井亮介`、`-i` は `岩本拓也` として紹介者欄を固定する。
+  - GASへ設定取得するときは末尾サフィックスを外したフォーム記号を使うため、新規案件でも同じURLルールが使える。
+  - スクショファイルはブラウザ仕様で復元不可。送信前に再選択が必要。
+  - 本番は GitHub Pages (`origin/master`) に `c6e0b07` として反映済み。
