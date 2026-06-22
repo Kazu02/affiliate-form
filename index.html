@@ -125,6 +125,12 @@
       border-radius: 8px; padding: 14px; color: #991b1b; font-size: 0.9rem; line-height: 1.6;
     }
     .error-banner.show { display: block; }
+    .fixed-field-note {
+      margin-top: 6px; font-size: 0.78rem; color: #15803d; line-height: 1.5;
+    }
+    .fixed-referrer {
+      background: #f0fdf4 !important; border-color: #86efac !important; color: #166534;
+    }
   </style>
 </head>
 <body>
@@ -206,6 +212,14 @@
 <script src="config.js"></script>
 <script>
   let GAS_URL = "";
+  let DRAFT_KEY = "";
+  let FIXED_REFERRER = "";
+  const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+  const REFERRER_SUFFIX_MAP = {
+    "-s": "菅原貴博",
+    "-m": "村井亮介",
+    "-i": "岩本拓也"
+  };
 
   // ---- 初期化：GASから設定を取得 ----
   async function init() {
@@ -214,18 +228,34 @@
     }
     GAS_URL = CONFIG.gasUrl;
 
-    // URLパラメータ ?form=xxx を取得
-    const formParam = new URLSearchParams(window.location.search).get("form");
-    const url       = formParam ? GAS_URL + "?form=" + encodeURIComponent(formParam) : GAS_URL;
+    const request = parseFormRequest();
+    DRAFT_KEY = "affiliateFormDraft:" + (request.rawForm || request.formCode || "default");
+    FIXED_REFERRER = request.fixedReferrer;
+    const url = request.formCode ? GAS_URL + "?form=" + encodeURIComponent(request.formCode) : GAS_URL;
 
     try {
       const res    = await fetch(url, { method: "GET" });
       const config = await res.json();
       if (config.error) { showError(); return; }
+      config.requestedFormName = request.rawForm || config.formName || request.formCode || "";
+      config.fixedReferrer = FIXED_REFERRER;
       buildForm(config);
     } catch (e) {
       showError();
     }
+  }
+
+  function parseFormRequest() {
+    const rawForm = (new URLSearchParams(window.location.search).get("form") || "").trim();
+    let formCode = rawForm;
+    let fixedReferrer = "";
+    Object.keys(REFERRER_SUFFIX_MAP).forEach(suffix => {
+      if (rawForm.endsWith(suffix)) {
+        formCode = rawForm.slice(0, -suffix.length);
+        fixedReferrer = REFERRER_SUFFIX_MAP[suffix];
+      }
+    });
+    return { rawForm, formCode, fixedReferrer };
   }
 
   function buildForm(config) {
@@ -299,7 +329,12 @@
       document.getElementById("clickTimeDisplay").classList.add("show");
       btn.classList.add("clicked");
       btn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
+      saveDraft(config);
     });
+
+    restoreDraft(config);
+    applyFixedReferrer(config);
+    setupDraftAutosave(config);
 
     // フォームを表示
     document.getElementById("loading").classList.add("hidden");
@@ -362,6 +397,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)
       });
+      clearDraft();
       document.getElementById("sendingOverlay").classList.remove("show");
       document.getElementById("formWrap").classList.add("hidden");
       document.getElementById("successScreen").classList.add("show");
@@ -388,7 +424,113 @@
       img.classList.add("show");
     };
     reader.readAsDataURL(file);
+    saveDraft(window._currentFormConfig || { fields: [] });
   });
+
+  function setupDraftAutosave(config) {
+    window._currentFormConfig = config;
+    const form = document.getElementById("mainForm");
+    form.addEventListener("input", () => saveDraft(config));
+    form.addEventListener("change", () => saveDraft(config));
+    window.addEventListener("pagehide", () => saveDraft(config));
+  }
+
+  function saveDraft(config) {
+    if (!DRAFT_KEY) return;
+    const draft = {
+      savedAt: Date.now(),
+      fields: {},
+      clickTime: document.getElementById("clickTime")?.value || ""
+    };
+    (config.fields || []).forEach(field => {
+      const el = document.getElementById(field.id);
+      if (!el) return;
+      const other = document.getElementById(field.id + "_other");
+      draft.fields[field.id] = el.value === "__other__" ? (other?.value || "") : el.value;
+    });
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) {}
+  }
+
+  function restoreDraft(config) {
+    if (!DRAFT_KEY) return;
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (e) {}
+    if (!draft) return;
+    if (Date.now() - Number(draft.savedAt || 0) > DRAFT_TTL_MS) {
+      clearDraft();
+      return;
+    }
+    (config.fields || []).forEach(field => {
+      const value = draft.fields ? draft.fields[field.id] : "";
+      if (value != null && value !== "") setFieldValue(field, value);
+    });
+    if (draft.clickTime) {
+      const clickInput = document.getElementById("clickTime");
+      const display = document.getElementById("clickTimeDisplay");
+      const text = document.getElementById("clickTimeText");
+      const btn = document.getElementById("affiliateBtn");
+      clickInput.value = draft.clickTime;
+      const date = new Date(draft.clickTime);
+      text.textContent = isNaN(date.getTime()) ? draft.clickTime : formatDatetime(date);
+      display.classList.add("show");
+      btn.classList.add("clicked");
+      btn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
+    }
+  }
+
+  function setFieldValue(field, value) {
+    const el = document.getElementById(field.id);
+    if (!el) return;
+    if (el.tagName === "SELECT") {
+      const values = Array.from(el.options).map(o => o.value);
+      if (values.includes(value)) {
+        el.value = value;
+      } else if (value) {
+        el.value = "__other__";
+        const other = document.getElementById(field.id + "_other");
+        if (other) {
+          other.value = value;
+          other.style.display = "block";
+        }
+      }
+      el.dispatchEvent(new Event("change"));
+    } else {
+      el.value = value;
+    }
+  }
+
+  function applyFixedReferrer(config) {
+    if (!config.fixedReferrer) return;
+    const field = (config.fields || []).find(f => f.id === "referrer");
+    if (!field) return;
+    const el = document.getElementById("referrer");
+    if (!el) return;
+    if (el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === config.fixedReferrer)) {
+      const option = document.createElement("option");
+      option.value = config.fixedReferrer;
+      option.textContent = config.fixedReferrer;
+      el.appendChild(option);
+    }
+    setFieldValue(field, config.fixedReferrer);
+    el.classList.add("fixed-referrer");
+    el.disabled = true;
+    const other = document.getElementById("referrer_other");
+    if (other) {
+      other.value = "";
+      other.style.display = "none";
+      other.disabled = true;
+    }
+    const note = document.createElement("div");
+    note.className = "fixed-field-note";
+    note.textContent = "紹介者は専用リンクにより固定されています。";
+    el.parentNode.appendChild(note);
+    saveDraft(config);
+  }
+
+  function clearDraft() {
+    if (!DRAFT_KEY) return;
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+  }
 
   function formatDatetime(date) {
     const p = n => String(n).padStart(2, "0");
