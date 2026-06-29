@@ -2429,11 +2429,25 @@ function ensureQuest150Trigger() {
 // ---- 既存フォーム回答を広告主成果管理シートへ一括インポート ----
 // 月ごとにバッファしてまとめて書き込む。同じシートに重複して実行しないこと。
 function importExistingToAdvertiserSheet() {
+  const result = importExistingToAdvertiserSheetCore_();
+  SpreadsheetApp.getUi().alert(
+    "インポート完了！\n追記: " + result.importCount + "件" +
+    "\n承認: " + result.approvedCount + "件" +
+    "\nトラッキング漏れ: " + result.trackingMissingCount + "件" +
+    (result.skipCount > 0 ? "\nスキップ（シートなし）: " + result.skipCount + "件" : "")
+  );
+}
+
+function importExistingToAdvertiserSheetCore_() {
   const advertiserSS = SpreadsheetApp.openById(ADVERTISER_SS_ID);
   const mainSS       = getOrCreateSpreadsheet();
 
   const buffer = {}; // yyyymm → [[receivedAt, name, referrer, ssUrl], ...]
   let skipCount = 0;
+  let approvedCount = 0;
+  let trackingMissingCount = 0;
+  let ignoredApprovalCount = 0;
+  const monthCounts = {};
 
   mainSS.getSheets().forEach(sheet => {
     if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
@@ -2472,14 +2486,20 @@ function importExistingToAdvertiserSheet() {
         if (!dateStr) return;
         const yyyymm = dateStr.substring(0, 7).replace("/", ""); // "2026/05" → "202605"
         if (!buffer[yyyymm]) buffer[yyyymm] = [];
-        const approved = shoninIdx >= 0 && String(row[shoninIdx] || "").trim() === "⭕️";
+        const approvalFlags = shoninIdx >= 0
+          ? getAdvertiserApprovalFlags(row[shoninIdx])
+          : { approved: false, trackingMissing: false };
+        if (approvalFlags.approved) approvedCount++;
+        else if (approvalFlags.trackingMissing) trackingMissingCount++;
+        else ignoredApprovalCount++;
         buffer[yyyymm].push([
           String(row[rtIdx]                      || ""),
           formDisplayName,
           nameIdx  >= 0 ? String(row[nameIdx]  || "").trim() : "",
           refIdx   >= 0 ? String(row[refIdx]   || "").trim() : "",
           ssUrlIdx >= 0 ? String(row[ssUrlIdx] || "").trim() : "",
-          approved
+          approvalFlags.trackingMissing,
+          approvalFlags.approved
         ]);
       });
   });
@@ -2497,23 +2517,28 @@ function importExistingToAdvertiserSheet() {
     }
     // 既存データ行をクリア（1行目タイトル・2行目ヘッダーは保持し3行目から消去）
     const clearLastRow = targetSheet.getLastRow();
-    const clearLastCol = Math.max(targetSheet.getLastColumn(), 6);
+    const clearLastCol = Math.max(targetSheet.getLastColumn(), 7);
     if (clearLastRow > 2) {
       targetSheet.getRange(3, 1, clearLastRow - 2, clearLastCol).clearContent();
     }
 
     const rows = buffer[yyyymm];
+    monthCounts[yyyymm] = rows.length;
     const startRow = getAdvertiserNextRow(targetSheet); // ヘッダー(2行目)の次=3行目
     targetSheet.getRange(startRow, 1, rows.length, 5).setValues(rows.map(r => r.slice(0, 5)));
-    targetSheet.getRange(startRow, 7, rows.length, 1).setValues(rows.map(r => [r[5]]));
+    targetSheet.getRange(startRow, 6, rows.length, 2).setValues(rows.map(r => [r[5], r[6]]));
     importCount += rows.length;
     Logger.log("広告主シート「" + yyyymm + "」に " + rows.length + "件追記");
   });
 
-  SpreadsheetApp.getUi().alert(
-    "インポート完了！\n追記: " + importCount + "件" +
-    (skipCount > 0 ? "\nスキップ（シートなし）: " + skipCount + "件" : "")
-  );
+  return {
+    importCount: importCount,
+    skipCount: skipCount,
+    approvedCount: approvedCount,
+    trackingMissingCount: trackingMissingCount,
+    ignoredApprovalCount: ignoredApprovalCount,
+    monthCounts: monthCounts
+  };
 }
 
 // ---- 広告主シートに月別シートを新規作成（既存シートをテンプレートにコピー）----
@@ -2566,9 +2591,24 @@ function getAdvertiserNextRow(sheet) {
   return 1;
 }
 
+function getAdvertiserApprovalFlags(value) {
+  const mark = String(value || "")
+    .replace(/\uFE0F/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  const approvedMarks = ["⭕", "○", "◯", "〇"];
+  const trackingMissingMarks = ["❌", "❎", "✖", "✕", "×", "☓", "✗", "✘"];
+
+  return {
+    approved: approvedMarks.indexOf(mark) >= 0,
+    trackingMissing: trackingMissingMarks.indexOf(mark) >= 0
+  };
+}
+
 // ---- 広告主成果管理シートに行を追記 ----
 // シート名は YYYYMM 形式（例: 202606）。対象シートが存在しない場合はログのみ。
-function writeToAdvertiserSheet(receivedAt, formDisplayName, customerName, referrerName, screenshotUrl, approved) {
+function writeToAdvertiserSheet(receivedAt, formDisplayName, customerName, referrerName, screenshotUrl, approved, trackingMissing) {
   const ss   = SpreadsheetApp.openById(ADVERTISER_SS_ID);
   const now  = new Date();
   const jst  = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -2583,6 +2623,6 @@ function writeToAdvertiserSheet(receivedAt, formDisplayName, customerName, refer
 
   const nextRow = getAdvertiserNextRow(sheet);
   sheet.getRange(nextRow, 1, 1, 5).setValues([[receivedAt, formDisplayName, customerName, referrerName, screenshotUrl]]);
-  sheet.getRange(nextRow, 7, 1, 1).setValue(approved || false);
+  sheet.getRange(nextRow, 6, 1, 2).setValues([[trackingMissing || false, approved || false]]);
   Logger.log("広告主シート「" + sheetName + "」に追記: " + customerName);
 }
