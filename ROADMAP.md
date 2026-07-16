@@ -23,7 +23,8 @@
 
 - 広告主提出用シートの承認区分・トラッキング漏れ反映は本番デプロイと再インポートまで完了。
 - 営業名簿を `JISHA_REFERRER_OPTIONS`（本体）/ `SALESPEOPLE`（振込先）に集約し `江口裕人` を追加（計9名）。本番反映済み（本体 version 99・紹介者選択肢14フォーム更新・顧客管理SS/SS2に担当タブ・振込先フォーム選択肢9択、いずれも江口裕人含む確認）。2026-07-16。
-- 営業担当別 案件ステータス表（`buildSalesRepStatusSheets()`、SS2 の担当タブを `{月}月{状態}` で再生成）は、名簿集約作業に伴い同ファイルごと version 99 に載った（休眠）。**ただし本機能の `buildSalesRepStatusSheets` 実行はゲート付きレビュー/検証待ちのまま**（今回は未実行）。`CLAUDE_REVIEW.md` によるレビュー → ゲート付き手動実行が残タスク。
+- 営業担当別 案件ステータス表（`buildSalesRepStatusSheets()`/`buildIntegratedRepSheets()`）は Codex 実装済・本番デプロイ済（version 99、`CODEX_REPORT.md` に @87/@89/@96 実行実績）。**事後コードレビュー（`CLAUDE_REVIEW.md`）を 2026-07-16 に実施し VERDICT: APPROVED**（軽微なハードニング提案1件を記録）。残タスクは「江口裕人 追加後の再生成」のみで、初案件が入ってから orchestrator 経由（`agents:queue -- affililink`）でゲート付き実行する。
+- 補足: Codex 自走経路の実在を検証済（2026-07-16）。orchestrator は planning/review=`claude.exe`・implementation=実 `codex.js exec`(gpt-5.6-sol) で分離、Codex 失敗時に Claude が代行するフォールバックは無い（失敗＝run全体failed）。スモークテストで実Codexが `OK`/exit0 を返すことを確認。
 
 ## Next
 
