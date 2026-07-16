@@ -119,6 +119,22 @@ const QUEST150_MONTH      = "2026/06";
 const QUEST150_SALESPEOPLE = ["岩本拓也", "菅原貴博", "村井亮介"];
 ```
 
+### 振込先フォーム（独立GASプロジェクト・2026-07新設）
+
+- 目的: アフィリエイト報酬の支払いに使う振込先情報をお客様から収集し、顧客行へ自動追記。
+- 実装: 本番Webアプリとは**別**のスタンドアロンGAS。`payout-form/`（scriptId `1X30nki2jpev7aD7EjVgg2xrpmwEBOCeW5a0ZgR07RD-KDLpA3tpuWHj_`）。
+- フォーム: `アフィリエイト報酬 振込先のご登録`
+  - formId `1AjakCgCyR1DwWzlcCbKaayuACAu5ray-Ic9c7slafs4`
+  - 回答URL `https://docs.google.com/forms/d/e/1FAIpQLSd3AXOJrEwker1hKLATVtQpIbSZ4wWvAS5cAl-bbYQ46UKbZg/viewform`
+  - 設問: お名前(フルネーム) / 紹介営業担当(8名から選択) / 金融機関名 / 支店名 / 預金種目(普通・当座) / 口座番号 / 口座名義(カナ)
+- 追記先: 統合顧客管理SS(SS1 `1aaiCIDQIkrp_Ado5aKua_PTEQq4jr1UWqpuLQXwpemI`)の「統合顧客管理」(マスター)＋「総合_<担当>」8タブ。`持ち家かどうか`(K列)の直後に6列(`金融機関名/支店名/預金種目/口座番号/口座名義(カナ)/振込先登録日時`)。
+- 照合: フルネームを `normalizeName` 正規化してあいまい照合(完全一致→先頭一致→編集距離1)。同名は紹介者(営業担当)で絞り込む。未照合は「振込先_未照合ログ」タブへ。
+- 主要関数: `runSetupAndSelfTest`(初回セットアップ＋自己検証) / `setup` / `onSubmit`(トリガー) / `writePayoutAll_` / `findMatchRow_` / `ensurePayoutColumns_` / 保守用に `selfTest`・`clearPayoutForName`・`readRowByName_`・`purgeFormResponses`・`cleanupHelperSheets`。
+- 注意点:
+  - 口座番号・店番の先頭ゼロ落ち防止のため書き込み前にセル書式を `@`(テキスト)にする。
+  - 「総合_<担当>」は `buildIntegratedRepSheets()` が再生成するため、マスターにも書いて保持している。
+  - clasp login はセンシティブスコープでブロックされるため使用不可。承認はエディタで関数を1回実行して行う。センシティブスコープでの遠隔実行はキー保護の一時Webアプリを立て→検証後に削除する運用（本番には残さない）。
+
 ## Constraints
 
 - GASアカウントは必ず shinhogle@gmail.com を使うこと（3s3.cube@gmail.com と混同しないよう注意）
