@@ -97,7 +97,8 @@
   - 振込先フォーム: `payout-form/Code.gs` の `SALESPEOPLE` を名簿とし、`setup()` 再実行で既存Googleフォームの「紹介営業担当」選択肢を `syncFormChoices_()` で同期。
   - フロント: `index.html` の `REFERRER_SUFFIX_MAP` に `-e → 江口裕人` を追加（固定紹介者リンク用）。
 - 追加メンバー: `江口裕人`（本体名簿・振込先名簿とも計9名）。
-- 運用: メンバー増減は名簿（本体は `JISHA_REFERRER_OPTIONS`、振込先は `SALESPEOPLE`）を編集し、本体はメニュー「フォーム管理 > 営業担当を同期」(`syncSalesRoster()`)を1回、振込先はエディタ or 一時Webアプリで `setup()` を1回実行する。`syncSalesRoster()` は非破壊で (1)全自社フォームの紹介者選択肢を再適用 (2)顧客管理SSに担当タブ追加 (3)SS2に担当タブ追加 を行う。onOpen でも名簿変更を自動検知して紹介者選択肢を再適用。
+- 運用: メンバー増減は名簿（本体は `JISHA_REFERRER_OPTIONS`、振込先は `SALESPEOPLE`）を編集し、本体はメニュー「フォーム管理 > 営業担当を同期」(`syncSalesRoster()`)を1回、振込先はエディタ or 一時Webアプリで `setup()` を1回実行する。`syncSalesRoster()` は非破壊で (1)全自社フォームの紹介者選択肢を再適用 (2)顧客管理SSに担当タブ追加 (3)SS2に担当タブ追加 (4)SS1に「総合_<担当>」タブ追加 を行う（タブ内データの再生成はしない＝空タブで用意し、`buildSalesRepStatusSheets`/`buildIntegratedRepSheets` の別実行で埋まる）。onOpen でも名簿変更を自動検知して紹介者選択肢を再適用。
+- 江口裕人 追加時の本番反映（2026-07-16, version 101）: 上記4系統すべてに江口タブ/選択肢が揃ったことを確認済み。顧客管理SS・SS2・SS1(総合_江口裕人)・全14フォームの紹介者選択肢・振込先フォーム選択肢、いずれも江口裕人を含む。SS1の`総合_江口裕人`は空タブ（初案件が入り `buildIntegratedRepSheets` を実行すると埋まる）。
 - 本番反映（2026-07-16, shinhogle）:
   - 本体GAS `clasp push`→`redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr`（URL維持, version 99）。
   - `syncSalesRoster()` を一時メンテフック経由で実行し、紹介者選択肢を14フォーム更新・顧客管理SSに「江口裕人」タブ追加を確認（SS2は9タブ既存で追加なし）。実フォーム `?form=ouchikuraberu` の referrer が9択・江口裕人含むことを確認。一時フックはソース・本番とも除去済み。

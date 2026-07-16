@@ -499,22 +499,24 @@ function applyReferrerSelectToJishaSheets(force) {
 
 // ---- 名簿(JISHA_REFERRER_OPTIONS)を一括同期（メニュー「営業担当を同期」）----
 // (1)全自社フォームの紹介者選択肢を再適用 (2)顧客管理SSに担当タブを追加
-// (3)SS2(担当別ステータス表)に担当タブを追加。いずれも非破壊（既存タブ・行は保持）。
-// 営業メンバーを増減したら、この関数を1回実行するだけで各所に反映される。
+// (3)SS2(担当別ステータス表)に担当タブを追加 (4)SS1(統合顧客管理)に「総合_<担当>」タブを追加。
+// いずれも非破壊（既存タブ・行・データは保持。データ再生成は buildSalesRepStatusSheets /
+// buildIntegratedRepSheets の別実行で行う）。営業メンバーを増減したらこの関数を1回実行するだけ。
 function syncSalesRoster() {
   const referrer = applyReferrerSelectToJishaSheets(true);
   const cmt = ensureCustomerMgmtTabs_();
   const rep = ensureRepStatusTabs_();
+  const integ = ensureIntegratedRepTabs_();
+  const fmt = function (r) { return (r.added && r.added.length) ? r.added.join(", ") : "なし"; };
   const msg = "営業担当ロスターを同期しました。\n\n"
     + "名簿: " + JISHA_REFERRER_OPTIONS + "\n\n"
     + "紹介者選択肢を更新: " + referrer.updated + " フォーム\n"
-    + "顧客管理SS 追加タブ: " + ((cmt.added && cmt.added.length) ? cmt.added.join(", ") : "なし")
-    + (cmt.error ? "（" + cmt.error + "）" : "") + "\n"
-    + "SS2(担当別) 追加タブ: " + ((rep.added && rep.added.length) ? rep.added.join(", ") : "なし")
-    + (rep.error ? "（" + rep.error + "）" : "");
+    + "顧客管理SS 追加タブ: " + fmt(cmt) + (cmt.error ? "（" + cmt.error + "）" : "") + "\n"
+    + "SS2(担当別) 追加タブ: " + fmt(rep) + (rep.error ? "（" + rep.error + "）" : "") + "\n"
+    + "SS1(総合_) 追加タブ: " + fmt(integ) + (integ.error ? "（" + integ.error + "）" : "");
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
-  return { referrer: referrer, customerMgmt: cmt, repStatus: rep };
+  return { referrer: referrer, customerMgmt: cmt, repStatus: rep, integrated: integ };
 }
 
 // ---- 顧客管理SSに名簿の担当タブが揃っているか確認し、無ければ追加（非破壊）----
@@ -573,6 +575,35 @@ function ensureRepStatusTabs_() {
     added.push(name);
   });
   Logger.log("ensureRepStatusTabs_: 追加=" + JSON.stringify(added));
+  return { added: added };
+}
+
+// ---- SS1(統合顧客管理)に名簿の「総合_<担当>」タブが揃っているか確認し、無ければ追加（非破壊）----
+// 既存の 総合_ タブのヘッダー・書式を見本に空タブを複製。データは buildIntegratedRepSheets 実行時に入る。
+function ensureIntegratedRepTabs_() {
+  let ss1;
+  try { ss1 = SpreadsheetApp.openById(REP_STATUS_SS1_ID); }
+  catch (e) { return { added: [], error: "SS1を開けません: " + e }; }
+  const roster = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  const PREFIX = "総合_";
+  let template = null;
+  const sheets = ss1.getSheets();
+  for (const s of sheets) { if (s.getName().indexOf(PREFIX) === 0) { template = s; break; } }
+  const added = [];
+  roster.forEach(function (name) {
+    const tabName = PREFIX + name;
+    if (ss1.getSheetByName(tabName)) return;
+    const sheet = ss1.insertSheet(tabName);
+    if (template) {
+      const lastCol = template.getLastColumn();
+      sheet.getRange(1, 1, 1, lastCol).setValues(template.getRange(1, 1, 1, lastCol).getValues());
+      template.getRange(1, 1, 1, lastCol).copyTo(sheet.getRange(1, 1, 1, lastCol), { formatOnly: true });
+      sheet.setFrozenRows(1);
+      for (let c = 1; c <= lastCol; c++) sheet.setColumnWidth(c, template.getColumnWidth(c));
+    }
+    added.push(tabName);
+  });
+  Logger.log("ensureIntegratedRepTabs_: 追加=" + JSON.stringify(added));
   return { added: added };
 }
 
