@@ -215,10 +215,12 @@
   let DRAFT_KEY = "";
   let FIXED_REFERRER = "";
   const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+  // 紹介者固定リンクの記号→担当（例 ?form=ouchikuraberu-s）。担当追加時はここに1行足す。
   const REFERRER_SUFFIX_MAP = {
     "-s": "菅原貴博",
     "-m": "村井亮介",
-    "-i": "岩本拓也"
+    "-i": "岩本拓也",
+    "-e": "江口裕人"
   };
 
   // ---- 初期化：GASから設定を取得 ----

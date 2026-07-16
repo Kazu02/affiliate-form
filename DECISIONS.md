@@ -89,3 +89,17 @@
 - 認証の要点: **clasp login はForms/Sheets等のセンシティブスコープをGoogleがブロックする**ため使用不可。スクリプトエディタで `runSetupAndSelfTest` を1回実行してオーナー(shinhogle)承認。検証・後始末はキー保護の一時Webアプリ経由で自走し、完了後にデプロイ削除・doGet/webapp設定をソースから除去済み。
 - フォームURL(回答用): `https://docs.google.com/forms/d/e/1FAIpQLSd3AXOJrEwker1hKLATVtQpIbSZ4wWvAS5cAl-bbYQ46UKbZg/viewform`
 - E2E検証済み: 「田中 太郎」(スペース入り)→「田中太郎」照合成功、マスター＋総合_藤森宣哉の両方に先頭ゼロ保持で書込→クリア確認。トリガー(onFormSubmit, shinhogle所有)発火も確認。
+
+## 2026-07-16: 営業名簿を単一の変更点に集約し 江口裕人 を追加（本番反映済み）
+
+- Decision: 営業担当（紹介者）の一覧を1箇所に集約し、メンバー増減を最小操作で行えるようにする。
+  - 本体GAS: 定数 `JISHA_REFERRER_OPTIONS`（Code.gs）を唯一の名簿とする。`repStatusRepAliasMap_()` は名簿から正規名の自己対応を自動生成し、苗字・表記ゆれのみ手動 `variants` で補う方式に変更。
+  - 振込先フォーム: `payout-form/Code.gs` の `SALESPEOPLE` を名簿とし、`setup()` 再実行で既存Googleフォームの「紹介営業担当」選択肢を `syncFormChoices_()` で同期。
+  - フロント: `index.html` の `REFERRER_SUFFIX_MAP` に `-e → 江口裕人` を追加（固定紹介者リンク用）。
+- 追加メンバー: `江口裕人`（本体名簿・振込先名簿とも計9名）。
+- 運用: メンバー増減は名簿（本体は `JISHA_REFERRER_OPTIONS`、振込先は `SALESPEOPLE`）を編集し、本体はメニュー「フォーム管理 > 営業担当を同期」(`syncSalesRoster()`)を1回、振込先はエディタ or 一時Webアプリで `setup()` を1回実行する。`syncSalesRoster()` は非破壊で (1)全自社フォームの紹介者選択肢を再適用 (2)顧客管理SSに担当タブ追加 (3)SS2に担当タブ追加 を行う。onOpen でも名簿変更を自動検知して紹介者選択肢を再適用。
+- 本番反映（2026-07-16, shinhogle）:
+  - 本体GAS `clasp push`→`redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr`（URL維持, version 99）。
+  - `syncSalesRoster()` を一時メンテフック経由で実行し、紹介者選択肢を14フォーム更新・顧客管理SSに「江口裕人」タブ追加を確認（SS2は9タブ既存で追加なし）。実フォーム `?form=ouchikuraberu` の referrer が9択・江口裕人含むことを確認。一時フックはソース・本番とも除去済み。
+  - 振込先フォームGAS `clasp push`、一時Webアプリ経由で `setup()` 実行→紹介営業担当が9択・江口裕人含むことを確認。一時Webアプリはundeploy・webapp設定/ doGet はソースから除去済み。
+- 注意: 本コミットの `gas-project/Code.gs` には、前セッションで未コミットだった営業担当別ステータス表機能（`buildSalesRepStatusSheets`/`buildIntegratedRepSheets`/`repStatusRepAliasMap_` 等・SS2/SS1生成）が含まれる。当作業はこの `repStatusRepAliasMap_` を名簿駆動へ改修する形で同ファイルに乗るため分離不能。今回のデプロイ(version 99)でこれらの関数も本番に載ったが、いずれもトリガー無しの手動関数で、`buildSalesRepStatusSheets`（ゲート付きレビュー/実行待ち）は今回実行していない（休眠状態）。

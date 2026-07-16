@@ -13,7 +13,8 @@
 ## Users And Stakeholders
 
 - **管理者**: shinhogle@gmail.com（市場作りプロジェクト全般）
-- **営業マン（自社）**: 柳沢悠貴, 岩本拓也, 菅原貴博, 村井亮介, 大島雅史, 小椋裕也, 細川貴弘, 藤森宣哉
+- **営業マン（自社）**: 柳沢悠貴, 岩本拓也, 菅原貴博, 村井亮介, 大島雅史, 小椋裕也, 細川貴弘, 藤森宣哉, 江口裕人（計9名）
+- **営業名簿の単一の変更点**: `Code.gs` の定数 `JISHA_REFERRER_OPTIONS`（カンマ区切り）。メンバー増減はここを編集し、スプレッドシートのメニュー「フォーム管理 > 営業担当を同期」を1回実行するだけ。これで(1)全自社フォームの紹介者選択肢 (2)顧客管理SS/SS2の担当タブ が揃う（`syncSalesRoster()`／`ensureCustomerMgmtTabs_()`／`ensureRepStatusTabs_()`、いずれも非破壊）。onOpen でも名簿変更を自動検知して紹介者選択肢を再適用する。振込先フォーム側は `payout-form/Code.gs` の `SALESPEOPLE`（こちらもメンバー増減時に編集→`setup()` 再実行でGoogleフォーム選択肢が同期される）。
 - **150件クエスト対象営業3名**: 岩本拓也, 菅原貴博, 村井亮介（各50件ノルマ、期限2026/06/30）
 - **広告主**: 成果管理シート（ADVERTISER_SS_ID）にアクセスする第三者
 
@@ -40,6 +41,8 @@
   - `?form=<フォーム記号>-s` → `菅原貴博`
   - `?form=<フォーム記号>-m` → `村井亮介`
   - `?form=<フォーム記号>-i` → `岩本拓也`
+  - `?form=<フォーム記号>-e` → `江口裕人`
+  - 記号→担当の対応は `index.html` の `REFERRER_SUFFIX_MAP`。担当追加時はここに1行足す。
 - 例: `https://kazu02.github.io/affiliate-form/?form=ouchikuraberu-s`
 - 固定リンクでは紹介者欄は自動選択され、ユーザーは変更できない。
 
@@ -116,7 +119,9 @@ const ANSWER_START_COL    = 7;          // G列から回答記録
 const AGENCY_DEFAULT      = "house";    // 自社フォームの識別コード
 const ADVERTISER_SS_ID    = "1bnERIRl4-VmQ2QP9IwxuPco64huKzNC5qxHfyvCBUVg";
 const QUEST150_MONTH      = "2026/06";
-const QUEST150_SALESPEOPLE = ["岩本拓也", "菅原貴博", "村井亮介"];
+const QUEST150_SALESPEOPLE = ["岩本拓也", "菅原貴博", "村井亮介"]; // 150件クエスト専用の3名。名簿とは別管理
+// 営業名簿（単一の変更点）。メンバー増減はここ→メニュー「営業担当を同期」
+const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人";
 ```
 
 ### 振込先フォーム（独立GASプロジェクト・2026-07新設）
@@ -126,7 +131,7 @@ const QUEST150_SALESPEOPLE = ["岩本拓也", "菅原貴博", "村井亮介"];
 - フォーム: `アフィリエイト報酬 振込先のご登録`
   - formId `1AjakCgCyR1DwWzlcCbKaayuACAu5ray-Ic9c7slafs4`
   - 回答URL `https://docs.google.com/forms/d/e/1FAIpQLSd3AXOJrEwker1hKLATVtQpIbSZ4wWvAS5cAl-bbYQ46UKbZg/viewform`
-  - 設問: お名前(フルネーム) / 紹介営業担当(8名から選択) / 金融機関名 / 支店名 / 預金種目(普通・当座) / 口座番号 / 口座名義(カナ)
+  - 設問: お名前(フルネーム) / 紹介営業担当(名簿 `SALESPEOPLE` から選択・現在9名) / 金融機関名 / 支店名 / 預金種目(普通・当座) / 口座番号 / 口座名義(カナ)
 - 追記先: 統合顧客管理SS(SS1 `1aaiCIDQIkrp_Ado5aKua_PTEQq4jr1UWqpuLQXwpemI`)の「統合顧客管理」(マスター)＋「総合_<担当>」8タブ。`持ち家かどうか`(K列)の直後に6列(`金融機関名/支店名/預金種目/口座番号/口座名義(カナ)/振込先登録日時`)。
 - 照合: フルネームを `normalizeName` 正規化してあいまい照合(完全一致→先頭一致→編集距離1)。同名は紹介者(営業担当)で絞り込む。未照合は「振込先_未照合ログ」タブへ。
 - 主要関数: `runSetupAndSelfTest`(初回セットアップ＋自己検証) / `setup` / `onSubmit`(トリガー) / `writePayoutAll_` / `findMatchRow_` / `ensurePayoutColumns_` / 保守用に `selfTest`・`clearPayoutForName`・`readRowByName_`・`purgeFormResponses`・`cleanupHelperSheets`。

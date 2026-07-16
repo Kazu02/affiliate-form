@@ -23,7 +23,11 @@ const AGENCY_PROP_PREFIX  = "AGENCY_SS_";   // ScriptProperties キー prefix
 const FORM_NAME_KEY     = "フォーム名";    // 設定シートのキー
 const FORM_CODE_HEADER  = "フォーム記号";  // 回答データG1ヘッダー
 const FORM_CODE_PATTERN = /^[a-zA-Z0-9_]+$/;
-const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉";
+// ===== 営業担当（紹介者）名簿：単一の変更点 =====
+// メンバーの増減はこのカンマ区切り文字列を編集し、スプレッドシートのメニュー
+// 「フォーム管理 > 営業担当を同期」を1回実行するだけ。
+// これで (1)全自社フォームの紹介者選択肢 (2)顧客管理SS/SS2の担当タブ が揃う。
+const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人";
 
 // 150件クエスト設定
 const QUEST150_TARGET_TOTAL = 150;
@@ -437,6 +441,7 @@ function onOpen() {
     .addSeparator()
     .addItem("スクショフォルダを再登録",   "resetScreenshotFolder")
     .addSeparator()
+    .addItem("営業担当を同期（紹介者選択肢＋担当タブ）", "syncSalesRoster")
     .addItem("顧客管理シートを作成",           "createCustomerManagementSheet")
     .addItem("顧客管理の案件列を同期",         "syncCustomerManagementCases")
     .addItem("既存データを顧客管理シートへインポート", "importExistingToCustomerSheet")
@@ -444,12 +449,17 @@ function onOpen() {
     .addToUi();
 }
 
-// ---- 自社シートの紹介者フィールドをselectに切り替え（初回のみ自動実行）----
-function applyReferrerSelectToJishaSheets() {
+// ---- 自社シートの紹介者フィールドをselectに切り替え＋選択肢を名簿へ同期 ----
+// onOpen から呼ばれる。名簿(JISHA_REFERRER_OPTIONS)が前回適用時から変わっていれば
+// 自動で再適用する（メンバー増減が次回シート起動時に反映される）。force=true で常に適用。
+function applyReferrerSelectToJishaSheets(force) {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty("REFERRER_SELECT_APPLIED") === "1") return;
+  const applied = props.getProperty("REFERRER_OPTIONS_APPLIED");
+  // 旧フラグ("REFERRER_SELECT_APPLIED"=="1")からの移行：値未記録なら「未同期」とみなして一度適用する
+  if (!force && applied === JISHA_REFERRER_OPTIONS) return { updated: 0, skipped: true };
 
   const ss = getOrCreateSpreadsheet();
+  let updated = 0;
   ss.getSheets().forEach(sheet => {
     if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
     const values = sheet.getDataRange().getValues();
@@ -475,13 +485,95 @@ function applyReferrerSelectToJishaSheets() {
       if (String(values[i][0]).trim() === "referrer") {
         sheet.getRange(i + 1, 3).setValue("select");
         sheet.getRange(i + 1, 6).setValue(JISHA_REFERRER_OPTIONS);
+        updated++;
         break;
       }
     }
   });
 
-  props.setProperty("REFERRER_SELECT_APPLIED", "1");
-  Logger.log("自社シートの紹介者フィールドをselectに更新しました");
+  props.setProperty("REFERRER_OPTIONS_APPLIED", JISHA_REFERRER_OPTIONS);
+  props.setProperty("REFERRER_SELECT_APPLIED", "1"); // 後方互換
+  Logger.log("自社シートの紹介者選択肢を同期しました（更新 " + updated + " シート）: " + JISHA_REFERRER_OPTIONS);
+  return { updated: updated, skipped: false };
+}
+
+// ---- 名簿(JISHA_REFERRER_OPTIONS)を一括同期（メニュー「営業担当を同期」）----
+// (1)全自社フォームの紹介者選択肢を再適用 (2)顧客管理SSに担当タブを追加
+// (3)SS2(担当別ステータス表)に担当タブを追加。いずれも非破壊（既存タブ・行は保持）。
+// 営業メンバーを増減したら、この関数を1回実行するだけで各所に反映される。
+function syncSalesRoster() {
+  const referrer = applyReferrerSelectToJishaSheets(true);
+  const cmt = ensureCustomerMgmtTabs_();
+  const rep = ensureRepStatusTabs_();
+  const msg = "営業担当ロスターを同期しました。\n\n"
+    + "名簿: " + JISHA_REFERRER_OPTIONS + "\n\n"
+    + "紹介者選択肢を更新: " + referrer.updated + " フォーム\n"
+    + "顧客管理SS 追加タブ: " + ((cmt.added && cmt.added.length) ? cmt.added.join(", ") : "なし")
+    + (cmt.error ? "（" + cmt.error + "）" : "") + "\n"
+    + "SS2(担当別) 追加タブ: " + ((rep.added && rep.added.length) ? rep.added.join(", ") : "なし")
+    + (rep.error ? "（" + rep.error + "）" : "");
+  Logger.log(msg);
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
+  return { referrer: referrer, customerMgmt: cmt, repStatus: rep };
+}
+
+// ---- 顧客管理SSに名簿の担当タブが揃っているか確認し、無ければ追加（非破壊）----
+// 見本タブ（先頭シート）のヘッダー・書式を複製して作る。案件列の入力規則も引き継ぐ。
+function ensureCustomerMgmtTabs_() {
+  const css = getCustomerManagementSS();
+  if (!css) return { added: [], error: "顧客管理SSが見つかりません（先に『顧客管理シートを作成』を実行）" };
+  const roster   = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  const existing = css.getSheets().map(function (s) { return normalizeName(s.getName()); });
+  const template = css.getSheets()[0];
+  const lastCol  = template.getLastColumn();
+  const headerVals = template.getRange(1, 1, 1, lastCol).getValues();
+  const STATUS_OPTIONS = ["申請中", "申請済", "完了", "不参加"];
+  const BASE_COLS = 3; // 顧客名/電話番号/顧客ID
+  const added = [];
+  roster.forEach(function (name) {
+    if (existing.indexOf(normalizeName(name)) >= 0) return;
+    const sheet = css.insertSheet(name);
+    sheet.getRange(1, 1, 1, lastCol).setValues(headerVals);
+    template.getRange(1, 1, 1, lastCol).copyTo(sheet.getRange(1, 1, 1, lastCol), { formatOnly: true });
+    sheet.setFrozenRows(1);
+    for (let c = 1; c <= lastCol; c++) sheet.setColumnWidth(c, template.getColumnWidth(c));
+    if (lastCol > BASE_COLS) {
+      const body = sheet.getRange(2, BASE_COLS + 1, 200, lastCol - BASE_COLS);
+      body.setBackground("#ede9fe").setHorizontalAlignment("center");
+      body.setDataValidation(
+        SpreadsheetApp.newDataValidation().requireValueInList(STATUS_OPTIONS).setAllowInvalid(true).build()
+      );
+    }
+    added.push(name);
+  });
+  Logger.log("ensureCustomerMgmtTabs_: 追加=" + JSON.stringify(added));
+  return { added: added };
+}
+
+// ---- SS2(担当別ステータス表)に名簿の担当タブが揃っているか確認し、無ければ追加（非破壊）----
+// 既存の担当タブのヘッダー・書式を見本に複製。データは buildSalesRepStatusSheets 実行時に入る。
+function ensureRepStatusTabs_() {
+  let outSS;
+  try { outSS = SpreadsheetApp.openById(REP_STATUS_SS2_ID); }
+  catch (e) { return { added: [], error: "SS2を開けません: " + e }; }
+  const roster = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  let template = null;
+  for (const name of roster) { const t = outSS.getSheetByName(name); if (t) { template = t; break; } }
+  const added = [];
+  roster.forEach(function (name) {
+    if (outSS.getSheetByName(name)) return;
+    const sheet = outSS.insertSheet(name);
+    if (template) {
+      const lastCol = template.getLastColumn();
+      sheet.getRange(1, 1, 1, lastCol).setValues(template.getRange(1, 1, 1, lastCol).getValues());
+      template.getRange(1, 1, 1, lastCol).copyTo(sheet.getRange(1, 1, 1, lastCol), { formatOnly: true });
+      sheet.setFrozenRows(1);
+      for (let c = 1; c <= lastCol; c++) sheet.setColumnWidth(c, template.getColumnWidth(c));
+    }
+    added.push(name);
+  });
+  Logger.log("ensureRepStatusTabs_: 追加=" + JSON.stringify(added));
+  return { added: added };
 }
 
 // ---- 全設定シートの回答ヘッダーをG1に初期化（未設定のシートのみ）----
@@ -2625,4 +2717,383 @@ function writeToAdvertiserSheet(receivedAt, formDisplayName, customerName, refer
   sheet.getRange(nextRow, 1, 1, 5).setValues([[receivedAt, formDisplayName, customerName, referrerName, screenshotUrl]]);
   sheet.getRange(nextRow, 6, 1, 2).setValues([[trackingMissing || false, approved || false]]);
   Logger.log("広告主シート「" + sheetName + "」に追記: " + customerName);
+}
+
+// =============================================
+// 営業担当別 案件ステータス表を SS2 に生成
+// 各セル = {申請月}月{状態}（例「5月承認」「6月申請」「5月非承認」）
+// 正データ = C(アフィリエイト管理SS=メインSS)の 設定_ タブ（代理店/小中様は agencyCode で除外）
+// 出力 = SS2 の8営業担当タブのみ（非破壊：2行目以降 clearContent → 再書き込み）
+// 実行: Apps Scriptエディタから buildSalesRepStatusSheets を Run（clasp run 不可のため）
+// =============================================
+const REP_STATUS_SS2_ID  = "1TARRQ_hqnptRGeEu5WzH1hlVZ2jqlfGunsHRcxbTWsg";
+const REP_STATUS_MAIN_ID  = "1JOMT_Uuoq3H6O9lZcAKuSpzC2ehUJ35k53mVvnZRwY0"; // C の ID ガード用
+const REP_STATUS_SS1_ID   = "1aaiCIDQIkrp_Ado5aKua_PTEQq4jr1UWqpuLQXwpemI"; // 統合顧客管理（フォーム顧客管理）ブック
+
+// 紹介者名(別名)→ 名簿の正規名(SS2タブ名)。normalizeName(別名) をキーに引く（漢字表記ゆれ吸収）
+// 正規名の自己対応は JISHA_REFERRER_OPTIONS から自動生成。表記ゆれ・苗字のみだけ手動で足す。
+function repStatusRepAliasMap_() {
+  const variants = {
+    "柳沢悠貴": ["柳澤悠貴", "柳沢", "柳澤", "橋沢悠貴", "橋澤悠貴", "橋沢", "橋澤"],
+    "岩本拓也": ["岩本"],
+    "菅原貴博": ["菅原"],
+    "村井亮介": ["村井"],
+    "大島雅史": ["大島"],
+    "小椋裕也": ["小椋"],
+    "細川貴弘": ["細川"],
+    "藤森宣哉": ["藤森"],
+    "江口裕人": ["江口"]
+  };
+  const map = {};
+  JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (canon) {
+    map[normalizeName(canon)] = canon; // 正規名の自己対応
+    (variants[canon] || []).forEach(function (alias) { map[normalizeName(alias)] = canon; });
+  });
+  return map;
+}
+
+// 紹介者名 → 8名の正規名。括弧内（「松田恵美（岩本拓也）」等）の担当名も救済する
+function resolveRepCanonical_(rawRef, aliasMap) {
+  let c = aliasMap[normalizeName(rawRef)];
+  if (c) return c;
+  const m = String(rawRef).match(/[（(]([^）)]+)[）)]/);
+  if (m) { c = aliasMap[normalizeName(m[1])]; if (c) return c; }
+  return null;
+}
+
+function buildSalesRepStatusSheets() {
+  const mainSS = getOrCreateSpreadsheet();
+  const mainId = mainSS.getId();
+  if (mainId !== REP_STATUS_MAIN_ID) {
+    const msg = "中止: メインSSのIDが想定外。実ID=" + mainId + " 名前=" + mainSS.getName() +
+                " / 期待=" + REP_STATUS_MAIN_ID + "（誤ブックへの書込防止）";
+    Logger.log(msg);
+    throw new Error(msg);
+  }
+
+  const aliasMap = repStatusRepAliasMap_();
+  const canonicalReps = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); });
+
+  // agg: rep -> custKey -> { name, cases: { 案件表示名 -> {cell, status, rtKey} } }
+  const agg = {};
+  const targetForms = [];
+  const excludedReferrers = {};
+  let monthMissing = 0;
+
+  mainSS.getSheets().forEach(function (sheet) {
+    if (sheet.getName().indexOf(CONFIG_PREFIX) !== 0) return;
+    const vals = sheet.getDataRange().getValues();
+    // 代理店フォーム除外（agencyCode が house 以外は対象外）
+    let agencyCode = AGENCY_DEFAULT;
+    for (let i = 0; i < vals.length; i++) {
+      if (String(vals[i][0]) === AGENCY_KEY) {
+        const code = String(vals[i][1] || "").trim();
+        if (code) agencyCode = code;
+        break;
+      }
+    }
+    if (agencyCode !== AGENCY_DEFAULT) return;
+
+    const caseName = getFormDisplayName(sheet, getFormCodeFromSheet(sheet) || "");
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2 || lastCol < ANSWER_START_COL) return;
+    const headers = sheet.getRange(1, ANSWER_START_COL, 1, lastCol - ANSWER_START_COL + 1).getValues()[0];
+    const rtIdx = headers.indexOf("受信日時");
+    const nameIdx = headers.indexOf("お名前");
+    const refIdx = headers.indexOf("紹介者名");
+    const shoninIdx = headers.indexOf("承認");
+    if (rtIdx < 0 || nameIdx < 0 || refIdx < 0) return;
+    targetForms.push(caseName);
+
+    sheet.getRange(2, ANSWER_START_COL, lastRow - 1, lastCol - ANSWER_START_COL + 1).getValues()
+      .forEach(function (row) {
+        const custName = String(row[nameIdx] || "").trim();
+        const rawRef = String(row[refIdx] || "").trim();
+        if (!custName || !rawRef) return;
+        const canon = resolveRepCanonical_(rawRef, aliasMap);
+        if (!canon) { excludedReferrers[rawRef] = (excludedReferrers[rawRef] || 0) + 1; return; }
+        const dateStr = toJSTDateStr(row[rtIdx]); // "YYYY/MM/DD"
+        if (!dateStr || dateStr.length < 7) { monthMissing++; return; }
+        const month = parseInt(dateStr.substring(5, 7), 10);
+        if (!month) { monthMissing++; return; }
+        const flags = shoninIdx >= 0 ? getAdvertiserApprovalFlags(row[shoninIdx]) : { approved: false, trackingMissing: false };
+        const status = flags.approved ? "承認" : (flags.trackingMissing ? "非承認" : "申請");
+        const cell = month + "月" + status;
+        const rtRaw = row[rtIdx];
+        const rtKey = (rtRaw instanceof Date) ? rtRaw.getTime() : (Date.parse(String(rtRaw)) || 0);
+
+        const custKey = normalizeName(custName);
+        if (!agg[canon]) agg[canon] = {};
+        if (!agg[canon][custKey]) agg[canon][custKey] = { name: custName, cases: {} };
+        const ex = agg[canon][custKey].cases[caseName];
+        if (!ex || rtKey >= ex.rtKey) {
+          agg[canon][custKey].cases[caseName] = { cell: cell, status: status, rtKey: rtKey };
+        }
+      });
+  });
+
+  // ---- SS2 へ非破壊書き込み（8タブのみ）----
+  const outSS = SpreadsheetApp.openById(REP_STATUS_SS2_ID);
+  const perRepRows = {};
+  const unmatchedCase = {};
+  let cApproved = 0, cApplied = 0, cRejected = 0;
+
+  canonicalReps.forEach(function (rep) {
+    const tab = outSS.getSheetByName(rep);
+    if (!tab) { Logger.log("SS2タブなし: " + rep + " → スキップ"); return; }
+    // 入力規則（データ検証）を全面解除（{月}月{状態} が既存規則に違反するため）
+    tab.getRange(1, 1, tab.getMaxRows(), tab.getMaxColumns()).clearDataValidations();
+    const lastCol = tab.getLastColumn();
+    const header = tab.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+    let nameCol = header.indexOf("顧客名"); if (nameCol < 0) nameCol = 0;
+    const caseCol = {};
+    header.forEach(function (h, idx) { if (h && idx >= 3) caseCol[h] = idx; }); // 案件列=4列目(index3)以降
+
+    const lastRow = tab.getLastRow();
+    if (lastRow > 1) {
+      tab.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+      tab.getRange(2, 1, lastRow - 1, lastCol).setBackground("#ffffff"); // 古い色分けを消す
+    }
+
+    const custs = agg[rep] || {};
+    const keys = Object.keys(custs).sort(function (a, b) {
+      const na = custs[a].name, nb = custs[b].name;
+      return na < nb ? -1 : (na > nb ? 1 : 0);
+    });
+    if (keys.length === 0) { tab.getRange(1, 1, 1, lastCol).setBorder(true, true, true, true, true, true); perRepRows[rep] = 0; return; }
+    const bgRows = [];
+    const out = keys.map(function (k) {
+      const c = custs[k];
+      const arr = [];
+      const bg = [];
+      for (let i = 0; i < lastCol; i++) { arr.push(""); bg.push("#ffffff"); }
+      arr[nameCol] = c.name;
+      Object.keys(c.cases).forEach(function (cn) {
+        const cc = c.cases[cn];
+        if (caseCol[cn] !== undefined) {
+          arr[caseCol[cn]] = cc.cell;
+          // 色分け: 承認=緑 / 非承認=赤 / 申請=黄
+          bg[caseCol[cn]] = cc.status === "承認" ? "#d9ead3" : (cc.status === "非承認" ? "#f4cccc" : "#fff2cc");
+          if (cc.status === "承認") cApproved++; else if (cc.status === "非承認") cRejected++; else cApplied++;
+        } else {
+          unmatchedCase[cn] = (unmatchedCase[cn] || 0) + 1;
+        }
+      });
+      bgRows.push(bg);
+      return arr;
+    });
+    tab.getRange(2, 1, out.length, lastCol).setValues(out);
+    tab.getRange(2, 1, out.length, lastCol).setBackgrounds(bgRows);
+    tab.getRange(1, 1, out.length + 1, lastCol).setBorder(true, true, true, true, true, true); // 枠線
+    perRepRows[rep] = out.length;
+  });
+
+  Logger.log("=== buildSalesRepStatusSheets 結果 ===");
+  Logger.log("C(メインSS) ID=" + mainId + " ガードOK");
+  Logger.log("対象 設定_ タブ数=" + targetForms.length + " : " + targetForms.join(", "));
+  Logger.log("担当別 出力行数: " + JSON.stringify(perRepRows));
+  Logger.log("最終セル状態別: 承認=" + cApproved + " 申請=" + cApplied + " 非承認=" + cRejected);
+  Logger.log("月不明で除外=" + monthMissing);
+  Logger.log("8名に正規化できず除外した紹介者名: " + JSON.stringify(excludedReferrers));
+  Logger.log("SS2ヘッダーに突合できなかった案件表示名: " + JSON.stringify(unmatchedCase));
+
+  return {
+    targetForms: targetForms, perRepRows: perRepRows,
+    approved: cApproved, applied: cApplied, rejected: cRejected,
+    monthMissing: monthMissing, excludedReferrers: excludedReferrers, unmatchedCase: unmatchedCase
+  };
+}
+
+// =============================================
+// 統合顧客管理（SS1）を営業担当別に分割 → SS1 に「総合_<担当>」タブを生成
+// 統合の全列を保持し、案件セルを {月}月{状態}＋色分けに置換。担当はアフィリンク優先。
+// =============================================
+function buildIntegratedRepSheets() {
+  const cSS = getOrCreateSpreadsheet();
+  if (cSS.getId() !== REP_STATUS_MAIN_ID) {
+    throw new Error("中止: メインSS(C)のID不一致 実ID=" + cSS.getId());
+  }
+  const aliasMap = repStatusRepAliasMap_();
+
+  // ---- C から: custKey → {案件 → {cell,status,rtKey}}、custKey → {rep,rtKey}(アフィリンク担当) ----
+  const byCust = {};
+  const affRepByCust = {};
+  cSS.getSheets().forEach(function (sheet) {
+    if (sheet.getName().indexOf(CONFIG_PREFIX) !== 0) return;
+    const vals = sheet.getDataRange().getValues();
+    let agencyCode = AGENCY_DEFAULT;
+    for (let i = 0; i < vals.length; i++) {
+      if (String(vals[i][0]) === AGENCY_KEY) { const code = String(vals[i][1] || "").trim(); if (code) agencyCode = code; break; }
+    }
+    if (agencyCode !== AGENCY_DEFAULT) return;
+    const caseName = getFormDisplayName(sheet, getFormCodeFromSheet(sheet) || "");
+    const lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+    if (lastRow < 2 || lastCol < ANSWER_START_COL) return;
+    const headers = sheet.getRange(1, ANSWER_START_COL, 1, lastCol - ANSWER_START_COL + 1).getValues()[0];
+    const rtIdx = headers.indexOf("受信日時"), nameIdx = headers.indexOf("お名前"), refIdx = headers.indexOf("紹介者名"), shoninIdx = headers.indexOf("承認");
+    if (rtIdx < 0 || nameIdx < 0) return;
+    sheet.getRange(2, ANSWER_START_COL, lastRow - 1, lastCol - ANSWER_START_COL + 1).getValues().forEach(function (row) {
+      const custName = String(row[nameIdx] || "").trim();
+      if (!custName) return;
+      const dateStr = toJSTDateStr(row[rtIdx]);
+      if (!dateStr || dateStr.length < 7) return;
+      const month = parseInt(dateStr.substring(5, 7), 10);
+      if (!month) return;
+      const flags = shoninIdx >= 0 ? getAdvertiserApprovalFlags(row[shoninIdx]) : { approved: false, trackingMissing: false };
+      const status = flags.approved ? "承認" : (flags.trackingMissing ? "非承認" : "申請");
+      const cell = month + "月" + status;
+      const rtRaw = row[rtIdx];
+      const rtKey = (rtRaw instanceof Date) ? rtRaw.getTime() : (Date.parse(String(rtRaw)) || 0);
+      const custKey = normalizeName(custName);
+      if (!byCust[custKey]) byCust[custKey] = {};
+      const ex = byCust[custKey][caseName];
+      if (!ex || rtKey >= ex.rtKey) byCust[custKey][caseName] = { cell: cell, status: status, rtKey: rtKey };
+      const canon = refIdx >= 0 ? resolveRepCanonical_(String(row[refIdx] || "").trim(), aliasMap) : null;
+      if (canon) { const e2 = affRepByCust[custKey]; if (!e2 || rtKey >= e2.rtKey) affRepByCust[custKey] = { rep: canon, rtKey: rtKey }; }
+    });
+  });
+  const allCases = {};
+  Object.keys(byCust).forEach(function (k) { Object.keys(byCust[k]).forEach(function (cn) { allCases[cn] = true; }); });
+
+  // ---- SS1 統合顧客管理 を読む ----
+  const ss1 = SpreadsheetApp.openById(REP_STATUS_SS1_ID);
+  const src = ss1.getSheetByName("統合顧客管理");
+  if (!src) throw new Error("統合顧客管理 タブが見つかりません");
+  const data = src.getDataRange().getValues();
+  if (data.length < 2) throw new Error("統合顧客管理 が空です");
+  const header = data[0].map(function (h) { return String(h).trim(); });
+  const w = header.length;
+  const repColIdx = header.indexOf("営業担当");
+  const affNameColIdx = header.indexOf("アフィリンク顧客名");
+  const nameColIdx = header.indexOf("名前");
+  const caseColIdxs = {};
+  header.forEach(function (h, idx) { if (allCases[h]) caseColIdxs[h] = idx; });
+
+  // ---- 担当別に振り分け ----
+  const perRep = {};
+  const excluded = {};
+  for (let r = 1; r < data.length; r++) {
+    const row = data[r];
+    if (String(row.join("")).trim() === "") continue;
+    const affName = affNameColIdx >= 0 ? String(row[affNameColIdx] || "").trim() : "";
+    const custKey = affName ? normalizeName(affName) : (nameColIdx >= 0 ? normalizeName(String(row[nameColIdx] || "")) : "");
+    let rep = (custKey && affRepByCust[custKey]) ? affRepByCust[custKey].rep : null;
+    if (!rep && repColIdx >= 0) {
+      const raw = String(row[repColIdx] || "").trim();
+      rep = resolveRepCanonical_(raw, aliasMap) || (raw || null); // 8名に無い担当は営業担当の生値でタブ化（取りこぼし防止）
+    }
+    if (!rep) { excluded["(空欄)"] = (excluded["(空欄)"] || 0) + 1; continue; } // 営業担当も紹介者も空の行のみ除外
+    const outRow = row.slice(0, w);
+    while (outRow.length < w) outRow.push("");
+    const cc = custKey ? (byCust[custKey] || {}) : {};
+    Object.keys(caseColIdxs).forEach(function (cn) {
+      if (cc[cn]) outRow[caseColIdxs[cn]] = cc[cn].cell; // C に状態があれば {月}月{状態}、無ければ統合の元値を保持
+    });
+    if (!perRep[rep]) perRep[rep] = [];
+    perRep[rep].push(outRow);
+  }
+
+  // ---- SS1 に「総合_<担当>」タブを書き込み ----
+  const canonicalReps = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); });
+  Object.keys(perRep).forEach(function (r) { if (canonicalReps.indexOf(r) < 0) canonicalReps.push(r); }); // 8名以外の担当も追加
+  const perRepRows = {};
+  canonicalReps.forEach(function (rep) {
+    const tabName = "総合_" + rep;
+    let tab = ss1.getSheetByName(tabName);
+    if (!tab) tab = ss1.insertSheet(tabName);
+    tab.clear();
+    tab.getRange(1, 1, tab.getMaxRows(), tab.getMaxColumns()).clearDataValidations();
+    const rows = perRep[rep] || [];
+    const all = [header.slice(0, w)].concat(rows);
+    tab.getRange(1, 1, all.length, w).setValues(all);
+    tab.getRange(1, 1, all.length, w).setBorder(true, true, true, true, true, true); // 枠線
+    if (rows.length > 0) {
+      const bg = rows.map(function (rw) {
+        const b = []; for (let i = 0; i < w; i++) b.push("#ffffff");
+        Object.keys(caseColIdxs).forEach(function (cn) {
+          const idx = caseColIdxs[cn]; const v = String(rw[idx] || "");
+          if (v.indexOf("承認") >= 0 && v.indexOf("非承認") < 0) b[idx] = "#d9ead3";
+          else if (v.indexOf("非承認") >= 0) b[idx] = "#f4cccc";
+          else if (v.indexOf("申請") >= 0) b[idx] = "#fff2cc";
+        });
+        return b;
+      });
+      tab.getRange(2, 1, rows.length, w).setBackgrounds(bg);
+    }
+    perRepRows[rep] = rows.length;
+  });
+
+  Logger.log("=== buildIntegratedRepSheets 結果 ===");
+  Logger.log("担当別 行数: " + JSON.stringify(perRepRows));
+  Logger.log("担当不明で除外: " + JSON.stringify(excluded));
+  return { perRepRows: perRepRows, excluded: excluded };
+}
+
+// =============================================
+// 統合顧客管理（SS1）から、元データC(設定_フォーム群)に実在しない
+// 「アフィリンクのみ」の幽霊/重複行を削除する。
+// 安全策: 氏名＋担当＋状態で内容一致した行のみ削除。各条件で一致1件でなければSKIP。
+// 削除前に行内容をログ化して返す。
+// =============================================
+function cleanupIntegratedPhantomRows() {
+  const ss1 = SpreadsheetApp.openById(REP_STATUS_SS1_ID);
+  const sh = ss1.getSheetByName("統合顧客管理");
+  if (!sh) throw new Error("統合顧客管理 タブが見つかりません");
+  const data = sh.getDataRange().getValues();
+  const header = data[0].map(function (h) { return String(h).trim(); });
+  const nameCol = header.indexOf("名前");
+  const repCol = header.indexOf("営業担当");
+  const stateCol = header.indexOf("状態");
+  if (nameCol < 0 || repCol < 0 || stateCol < 0) throw new Error("必要列(名前/営業担当/状態)が見つかりません");
+
+  // C照合で確定した幽霊/重複行（2026-07-06 調査）
+  const targets = [
+    { name: "高橋祐樹",   rep: "柳沢悠貴", reason: "Cは髙橋祐樹＝菅原(別行が正)" },
+    { name: "榎本",       rep: "柳沢悠貴", reason: "Cは榎本彩人＝岩本(別行が正)" },
+    { name: "岩鼻ひかる", rep: "菅原貴博", reason: "Cに該当者なし" }
+  ];
+
+  const toDelete = [];   // {row, snapshot}
+  const report = [];
+  targets.forEach(function (t) {
+    const hits = [];
+    for (let r = 1; r < data.length; r++) {
+      if (String(data[r][nameCol]).trim() === t.name &&
+          String(data[r][repCol]).trim() === t.rep &&
+          String(data[r][stateCol]).indexOf("アフィリンクのみ") >= 0) {
+        hits.push(r);
+      }
+    }
+    if (hits.length === 1) {
+      const r = hits[0];
+      const snap = [];
+      for (let c = 0; c < header.length; c++) { const v = data[r][c]; if (v !== "" && v !== null) snap.push(header[c] + "=" + v); }
+      toDelete.push({ row: r + 1, snapshot: snap.join(" | ") }); // 1-indexed シート行
+      report.push("DELETE r" + (r + 1) + " " + t.name + "/" + t.rep + " [" + t.reason + "] :: " + snap.join(" | "));
+    } else {
+      report.push("SKIP " + t.name + "/" + t.rep + " (一致=" + hits.length + "件のため保留)");
+    }
+  });
+
+  // 安全上限: 想定は3行。8行超なら誤検知の恐れがあるため中止。
+  if (toDelete.length > 8) throw new Error("削除候補が多すぎます(" + toDelete.length + ")。中止。");
+
+  // ★重要: フィルタがあると deleteRow が無言で失敗する。一旦外してから削除し、後で再作成する。
+  var hadFilter = false;
+  var existing = sh.getFilter();
+  if (existing) { existing.remove(); hadFilter = true; }
+
+  // 下から順に削除（行番号ズレ防止）
+  toDelete.map(function (d) { return d.row; }).sort(function (a, b) { return b - a; }).forEach(function (rn) { sh.deleteRow(rn); });
+  SpreadsheetApp.flush(); // 削除を確定させてから後続(再生成)が最新を読むように
+
+  // フィルタを元のデータ範囲に再作成（フィルタ条件は保持されず、素のフィルタを復元）
+  if (hadFilter && sh.getLastRow() > 1) {
+    sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).createFilter();
+  }
+
+  Logger.log("=== cleanupIntegratedPhantomRows ===");
+  report.forEach(function (l) { Logger.log(l); });
+  return { deleted: toDelete.length, detail: report };
 }

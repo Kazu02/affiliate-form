@@ -53,7 +53,10 @@ function readRowByName_(name) {
 
 // ===== 定数 =====
 const SS1_ID = "1aaiCIDQIkrp_Ado5aKua_PTEQq4jr1UWqpuLQXwpemI"; // 統合顧客管理ブック
-const SALESPEOPLE = ["柳沢悠貴", "岩本拓也", "菅原貴博", "村井亮介", "大島雅史", "小椋裕也", "細川貴弘", "藤森宣哉"];
+// ===== 営業担当 名簿：単一の変更点 =====
+// メンバーの増減はこの配列を編集し、エディタで setup() を1回実行するだけ。
+// setup() が既存フォームの「紹介営業担当」選択肢をこの配列へ同期する。
+const SALESPEOPLE = ["柳沢悠貴", "岩本拓也", "菅原貴博", "村井亮介", "大島雅史", "小椋裕也", "細川貴弘", "藤森宣哉", "江口裕人"];
 
 const OWNERSHIP_HEADER = "持ち家かどうか";
 const NAME_HEADER_CANDIDATES = ["名前", "顧客名", "お名前", "氏名"];
@@ -345,6 +348,7 @@ function setup() {
   if (existing) {
     var f = FormApp.openById(existing);
     Logger.log("既存フォームを再利用: " + f.getPublishedUrl());
+    syncFormChoices_(f); // 紹介営業担当の選択肢を名簿(SALESPEOPLE)へ同期
     ensurePayoutColumnsAllSheets();
     ensureSubmitTrigger_(existing);
     var reusedResult = { formId: existing, publishedUrl: f.getPublishedUrl(), editUrl: f.getEditUrl(), reused: true };
@@ -431,6 +435,21 @@ function ensureSubmitTrigger_(formId) {
   var form = FormApp.openById(formId);
   ScriptApp.newTrigger("onSubmit").forForm(form).onFormSubmit().create();
   Logger.log("onSubmit トリガーを登録しました");
+}
+
+// 「紹介営業担当」リスト項目の選択肢を名簿(SALESPEOPLE)へ同期する（既存フォームの更新用）。
+// メンバー増減後に setup() を再実行すると、この関数で選択肢が最新化される。
+function syncFormChoices_(form) {
+  var items = form.getItems(FormApp.ItemType.LIST);
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].getTitle().trim() === Q_REFERRER) {
+      items[i].asListItem().setChoiceValues(SALESPEOPLE);
+      Logger.log("紹介営業担当の選択肢を同期: " + SALESPEOPLE.join(", "));
+      return true;
+    }
+  }
+  Logger.log("紹介営業担当のリスト項目が見つかりませんでした");
+  return false;
 }
 
 // ===== フォーム送信ハンドラ =====
