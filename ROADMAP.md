@@ -23,12 +23,13 @@
 
 - 広告主提出用シートの承認区分・トラッキング漏れ反映は本番デプロイと再インポートまで完了。
 - 営業名簿を `JISHA_REFERRER_OPTIONS`（本体）/ `SALESPEOPLE`（振込先）に集約し `江口裕人` を追加（計9名）。本番反映済み（本体 version 99・紹介者選択肢14フォーム更新・顧客管理SS/SS2に担当タブ・振込先フォーム選択肢9択、いずれも江口裕人含む確認）。2026-07-16。
-- 営業担当別 案件ステータス表（`buildSalesRepStatusSheets()`/`buildIntegratedRepSheets()`）は Codex 実装済・本番デプロイ済（version 99、`CODEX_REPORT.md` に @87/@89/@96 実行実績）。**事後コードレビュー（`CLAUDE_REVIEW.md`）を 2026-07-16 に実施し VERDICT: APPROVED**（軽微なハードニング提案1件を記録）。残タスクは「江口裕人 追加後の再生成」のみで、初案件が入ってから orchestrator 経由（`agents:queue -- affililink`）でゲート付き実行する。
+- 営業担当別 案件ステータス表（`buildSalesRepStatusSheets()`/`buildIntegratedRepSheets()`）は Codex 実装済・本番デプロイ済。事後コードレビュー（`CLAUDE_REVIEW.md`）を 2026-07-16 に実施し VERDICT: APPROVED。**残タスクだった「江口裕人 追加後の再生成」は 2026-07-24 に完了**（SS1 `総合_江口裕人` = 32行）。あわせて再生成が手動忘れになる構造自体を解消済み（下記）。
+- **メンバー増減は「名簿を編集 → メニュー『営業担当を同期』を1回」で完結する**（2026-07-24）。`syncSalesRoster()` が案件列の整列と SS2/SS1 の再生成まで通しで行う。再生成2関数と案件列同期もメニューから単体実行できる。SS2 担当タブの案件列がバラバラで実績が黙って捨てられていた問題（`unmatchedCase`）も解消し、全9タブで案件列集合が一致。
 - 補足: Codex 自走経路の実在を検証済（2026-07-16）。orchestrator は planning/review=`claude.exe`・implementation=実 `codex.js exec`(gpt-5.6-sol) で分離、Codex 失敗時に Claude が代行するフォールバックは無い（失敗＝run全体failed）。スモークテストで実Codexが `OK`/exit0 を返すことを確認。
 
 ## Next
 
-- `buildSalesRepStatusSheets()` の実装 → レビュー（`CLAUDE_REVIEW.md`）→ ゲート付き手動実行・検証。
+- 紹介者名「藤井勇大」の扱いを決める（自社フォーム回答3件が名簿に無く SS2 で除外中）。新メンバーなら `JISHA_REFERRER_OPTIONS` に追加して同期、誤入力なら回答側を修正。
 - それ以降の特定タスクは未定。ユーザーからの新要件を待つ。
 
 ## Blockers

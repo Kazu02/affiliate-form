@@ -441,11 +441,15 @@ function onOpen() {
     .addSeparator()
     .addItem("スクショフォルダを再登録",   "resetScreenshotFolder")
     .addSeparator()
-    .addItem("営業担当を同期（紹介者選択肢＋担当タブ）", "syncSalesRoster")
+    .addItem("営業担当を同期（選択肢＋担当タブ＋データ再生成）", "syncSalesRoster")
     .addItem("顧客管理シートを作成",           "createCustomerManagementSheet")
     .addItem("顧客管理の案件列を同期",         "syncCustomerManagementCases")
     .addItem("既存データを顧客管理シートへインポート", "importExistingToCustomerSheet")
     .addItem("既存データを広告主シートへインポート",   "importExistingToAdvertiserSheet")
+    .addSeparator()
+    .addItem("担当別ステータス表の案件列を同期（SS2）", "syncRepStatusCaseColumns")
+    .addItem("担当別ステータス表を再生成（SS2）",       "buildSalesRepStatusSheets")
+    .addItem("総合_担当タブを再生成（SS1）",           "buildIntegratedRepSheets")
     .addToUi();
 }
 
@@ -499,24 +503,56 @@ function applyReferrerSelectToJishaSheets(force) {
 
 // ---- 名簿(JISHA_REFERRER_OPTIONS)を一括同期（メニュー「営業担当を同期」）----
 // (1)全自社フォームの紹介者選択肢を再適用 (2)顧客管理SSに担当タブを追加
-// (3)SS2(担当別ステータス表)に担当タブを追加 (4)SS1(統合顧客管理)に「総合_<担当>」タブを追加。
-// いずれも非破壊（既存タブ・行・データは保持。データ再生成は buildSalesRepStatusSheets /
-// buildIntegratedRepSheets の別実行で行う）。営業メンバーを増減したらこの関数を1回実行するだけ。
+// (3)SS2(担当別ステータス表)に担当タブを追加 (4)SS1(統合顧客管理)に「総合_<担当>」タブを追加
+// (5)SS2/SS1 の担当別データを再生成し、(3)(4)で作った空タブに実データを流し込む。
+// (1)〜(4) は非破壊（既存タブ・行・データは保持）。(5) は担当別タブ＝生成物のみ作り直す。
+// 営業メンバーを増減したら、この関数を1回実行するだけで全フォーム・全シートが揃う。
+// ※ (5) を省くと「タブはあるが中身が空」の担当が残るので、ここで必ず続けて実行する。
 function syncSalesRoster() {
   const referrer = applyReferrerSelectToJishaSheets(true);
   const cmt = ensureCustomerMgmtTabs_();
   const rep = ensureRepStatusTabs_();
+  const cols = ensureRepStatusCaseColumns_(); // 案件列の横幅を全担当タブで揃えてから書き込む
   const integ = ensureIntegratedRepTabs_();
+
+  // タブを作っただけではデータが入らないので、続けて担当別データを再生成する。
+  // 片方が失敗しても (1)〜(4) の結果と他方の再生成は失わないよう、個別に捕捉して報告に載せる。
+  let repBuild = null, repBuildErr = "";
+  try { repBuild = buildSalesRepStatusSheets(); }
+  catch (e) { repBuildErr = String(e); Logger.log("buildSalesRepStatusSheets 失敗: " + e); }
+  let integBuild = null, integBuildErr = "";
+  try { integBuild = buildIntegratedRepSheets(); }
+  catch (e) { integBuildErr = String(e); Logger.log("buildIntegratedRepSheets 失敗: " + e); }
+
   const fmt = function (r) { return (r.added && r.added.length) ? r.added.join(", ") : "なし"; };
+  const fmtCols = function (r) {
+    const ks = Object.keys(r.added || {});
+    return ks.length ? ks.map(function (k) { return k + "(" + r.added[k].join("/") + ")"; }).join(", ") : "なし";
+  };
+  const rows = function (b, err) {
+    if (err) return "失敗（" + err + "）";
+    if (!b || !b.perRepRows) return "結果なし";
+    const keys = Object.keys(b.perRepRows);
+    if (!keys.length) return "0件";
+    return keys.map(function (k) { return k + "=" + b.perRepRows[k]; }).join(", ");
+  };
   const msg = "営業担当ロスターを同期しました。\n\n"
     + "名簿: " + JISHA_REFERRER_OPTIONS + "\n\n"
     + "紹介者選択肢を更新: " + referrer.updated + " フォーム\n"
     + "顧客管理SS 追加タブ: " + fmt(cmt) + (cmt.error ? "（" + cmt.error + "）" : "") + "\n"
     + "SS2(担当別) 追加タブ: " + fmt(rep) + (rep.error ? "（" + rep.error + "）" : "") + "\n"
-    + "SS1(総合_) 追加タブ: " + fmt(integ) + (integ.error ? "（" + integ.error + "）" : "");
+    + "SS2 追加した案件列: " + fmtCols(cols) + (cols.error ? "（" + cols.error + "）" : "") + "\n"
+    + "SS1(総合_) 追加タブ: " + fmt(integ) + (integ.error ? "（" + integ.error + "）" : "") + "\n\n"
+    + "SS2 担当別データ再生成: " + rows(repBuild, repBuildErr) + "\n"
+    + "SS1 総合_データ再生成: " + rows(integBuild, integBuildErr);
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
-  return { referrer: referrer, customerMgmt: cmt, repStatus: rep, integrated: integ };
+  return {
+    referrer: referrer, customerMgmt: cmt, repStatus: rep,
+    repStatusCaseColumns: cols, integrated: integ,
+    repStatusBuild: repBuild, repStatusBuildError: repBuildErr,
+    integratedBuild: integBuild, integratedBuildError: integBuildErr
+  };
 }
 
 // ---- 顧客管理SSに名簿の担当タブが揃っているか確認し、無ければ追加（非破壊）----
@@ -559,8 +595,13 @@ function ensureRepStatusTabs_() {
   try { outSS = SpreadsheetApp.openById(REP_STATUS_SS2_ID); }
   catch (e) { return { added: [], error: "SS2を開けません: " + e }; }
   const roster = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  // 見本は「案件列が最も揃っているタブ」を選ぶ。先頭一致で選ぶと、案件列が増える前に作られた
+  // 古い(狭い)タブを複製してしまい、新メンバーだけ案件列が欠けた状態で作られる。
   let template = null;
-  for (const name of roster) { const t = outSS.getSheetByName(name); if (t) { template = t; break; } }
+  roster.forEach(function (name) {
+    const t = outSS.getSheetByName(name);
+    if (t && (!template || t.getLastColumn() > template.getLastColumn())) template = t;
+  });
   const added = [];
   roster.forEach(function (name) {
     if (outSS.getSheetByName(name)) return;
@@ -576,6 +617,74 @@ function ensureRepStatusTabs_() {
   });
   Logger.log("ensureRepStatusTabs_: 追加=" + JSON.stringify(added));
   return { added: added };
+}
+
+// ---- SS2(担当別ステータス表)の各担当タブに自社フォームの案件列が揃っているか確認し、無ければ追加（非破壊）----
+// buildSalesRepStatusSheets は「そのタブ自身のヘッダー」を見て案件列を引くので、列が無い案件の実績は
+// 黙って捨てられる（unmatchedCase に計上されるだけ）。新フォーム追加時・新メンバー追加時の
+// 取りこぼしを防ぐため、名簿の全タブに不足案件列を追記して横幅を揃える。
+function ensureRepStatusCaseColumns_() {
+  let outSS;
+  try { outSS = SpreadsheetApp.openById(REP_STATUS_SS2_ID); }
+  catch (e) { return { added: {}, error: "SS2を開けません: " + e }; }
+
+  const mainSS = getOrCreateSpreadsheet();
+  if (mainSS.getId() !== REP_STATUS_MAIN_ID) {
+    return { added: {}, error: "メインSSのID不一致 実ID=" + mainSS.getId() };
+  }
+  // 自社(house)フォームの案件表示名を、buildSalesRepStatusSheets と同じ条件で集める
+  const caseNames = [];
+  mainSS.getSheets().forEach(function (sheet) {
+    if (sheet.getName().indexOf(CONFIG_PREFIX) !== 0) return;
+    const vals = sheet.getDataRange().getValues();
+    let agencyCode = AGENCY_DEFAULT;
+    for (let i = 0; i < vals.length; i++) {
+      if (String(vals[i][0]) === AGENCY_KEY) { const c = String(vals[i][1] || "").trim(); if (c) agencyCode = c; break; }
+    }
+    if (agencyCode !== AGENCY_DEFAULT) return;
+    const cn = getFormDisplayName(sheet, getFormCodeFromSheet(sheet) || "");
+    if (cn && caseNames.indexOf(cn) < 0) caseNames.push(cn);
+  });
+  if (!caseNames.length) return { added: {}, error: "自社フォームの案件名を取得できませんでした" };
+
+  const roster = JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  const BASE_COLS = 3; // 顧客名/電話番号/顧客ID
+  const added = {};
+  roster.forEach(function (name) {
+    const tab = outSS.getSheetByName(name);
+    if (!tab) return;
+    const lastCol = tab.getLastColumn();
+    const header = tab.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+    const missing = caseNames.filter(function (cn) { return header.indexOf(cn) < 0; });
+    if (!missing.length) return;
+    if (tab.getMaxColumns() < lastCol + missing.length) {
+      tab.insertColumnsAfter(lastCol, lastCol + missing.length - tab.getMaxColumns());
+    }
+    tab.getRange(1, lastCol + 1, 1, missing.length).setValues([missing]);
+    // 既存の案件列(4列目)のヘッダー書式を見本に揃える
+    if (lastCol > BASE_COLS) {
+      tab.getRange(1, BASE_COLS + 1, 1, 1)
+         .copyTo(tab.getRange(1, lastCol + 1, 1, missing.length), { formatOnly: true });
+    }
+    for (let i = 0; i < missing.length; i++) tab.setColumnWidth(lastCol + 1 + i, 130);
+    added[name] = missing;
+  });
+  Logger.log("ensureRepStatusCaseColumns_: 追加列=" + JSON.stringify(added));
+  return { added: added };
+}
+
+// メニューから単体実行する用（新しいフォームを追加したあとに走らせる）
+function syncRepStatusCaseColumns() {
+  const r = ensureRepStatusCaseColumns_();
+  const names = Object.keys(r.added || {});
+  const msg = r.error
+    ? "SS2 案件列の同期に失敗: " + r.error
+    : (names.length
+        ? "SS2 案件列を追加しました:\n" + names.map(function (n) { return "・" + n + ": " + r.added[n].join(", "); }).join("\n")
+        : "SS2 の案件列は全担当タブで揃っています。");
+  Logger.log(msg);
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
+  return r;
 }
 
 // ---- SS1(統合顧客管理)に名簿の「総合_<担当>」タブが揃っているか確認し、無ければ追加（非破壊）----

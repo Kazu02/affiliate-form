@@ -14,7 +14,16 @@
 
 - **管理者**: shinhogle@gmail.com（市場作りプロジェクト全般）
 - **営業マン（自社）**: 柳沢悠貴, 岩本拓也, 菅原貴博, 村井亮介, 大島雅史, 小椋裕也, 細川貴弘, 藤森宣哉, 江口裕人（計9名）
-- **営業名簿の単一の変更点**: `Code.gs` の定数 `JISHA_REFERRER_OPTIONS`（カンマ区切り）。メンバー増減はここを編集し、スプレッドシートのメニュー「フォーム管理 > 営業担当を同期」を1回実行するだけ。これで (1)全自社フォームの紹介者選択肢 (2)顧客管理SSの担当タブ (3)SS2(担当別)の担当タブ (4)SS1(統合顧客管理)の「総合_<担当>」タブ が揃う（`syncSalesRoster()`／`ensureCustomerMgmtTabs_()`／`ensureRepStatusTabs_()`／`ensureIntegratedRepTabs_()`、いずれも非破壊＝既存タブ・行・データは不変。タブ内のデータ再生成は `buildSalesRepStatusSheets()`／`buildIntegratedRepSheets()` の別実行）。onOpen でも名簿変更を自動検知して紹介者選択肢を再適用する。振込先フォーム側は `payout-form/Code.gs` の `SALESPEOPLE`（こちらもメンバー増減時に編集→`setup()` 再実行でGoogleフォーム選択肢が同期される）。
+- **営業名簿の単一の変更点**: `Code.gs` の定数 `JISHA_REFERRER_OPTIONS`（カンマ区切り）。メンバー増減はここを編集し、スプレッドシートのメニュー「フォーム管理 > 営業担当を同期（選択肢＋担当タブ＋データ再生成）」を1回実行するだけ。`syncSalesRoster()` が以下を通しで行う:
+  1. 全自社フォームの紹介者選択肢を再適用（`applyReferrerSelectToJishaSheets`）
+  2. 顧客管理SSに担当タブを追加（`ensureCustomerMgmtTabs_`）
+  3. SS2(担当別)に担当タブを追加（`ensureRepStatusTabs_`。見本は**案件列が最も多いタブ**を選ぶ）
+  4. SS2 の全担当タブに不足案件列を追記して横幅を揃える（`ensureRepStatusCaseColumns_`）
+  5. SS1(統合顧客管理)に「総合_<担当>」タブを追加（`ensureIntegratedRepTabs_`）
+  6. **SS2・SS1 の担当別データを再生成**（`buildSalesRepStatusSheets()` / `buildIntegratedRepSheets()`）
+
+  1〜5 は非破壊（既存タブ・行・データは不変）、6 は担当別タブ＝生成物のみ作り直す。**6 を省くと「タブはあるが中身が空」の担当が残る**ため必ず通しで実行する（2026-07-16 に江口裕人を追加した際、6 が未実行のまま放置され `総合_江口裕人` が空だった。2026-07-24 に恒久対策済み）。onOpen でも名簿変更を自動検知して紹介者選択肢を再適用する。振込先フォーム側は `payout-form/Code.gs` の `SALESPEOPLE`（こちらもメンバー増減時に編集→`setup()` 再実行でGoogleフォーム選択肢が同期される）。
+- **新しいフォーム(案件)を追加したとき**: メニュー「担当別ステータス表の案件列を同期（SS2）」(`syncRepStatusCaseColumns()`) を実行して SS2 全担当タブに案件列を追加する。`buildSalesRepStatusSheets` は**そのタブ自身のヘッダー**で案件列を引くため、列が無いと実績が黙って捨てられる（`unmatchedCase` に計上されるだけ）。
 - **150件クエスト対象営業3名**: 岩本拓也, 菅原貴博, 村井亮介（各50件ノルマ、期限2026/06/30）
 - **広告主**: 成果管理シート（ADVERTISER_SS_ID）にアクセスする第三者
 
