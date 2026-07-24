@@ -120,3 +120,23 @@
 - 未解決（ユーザー判断待ち）:
   - `excludedReferrers: {"藤井勇大": 3}` — 自社フォーム回答に紹介者名「藤井勇大」が3件あるが名簿に無く、SS2 で除外されている。新メンバーなら `JISHA_REFERRER_OPTIONS` に追加、誤入力なら回答側を修正する必要がある。
   - SS2 の `江口裕人` は0行のままだが、これは正常。SS2 は**フォーム回答の紹介者名**を集計する表で、江口を紹介者とする回答がまだ無いため。江口の32件は `統合顧客管理` の営業担当列由来で、SS1 側に正しく出ている。
+
+## 2026-07-24: 藤井勇大 を営業名簿に追加（計10名・新手順の初適用）
+
+- 背景: 同日の再生成で `excludedReferrers: {"藤井勇大": 3}` を検出。自社フォーム回答に紹介者名「藤井勇大」が3件あるが名簿に無く、SS2 から除外されていた。ユーザー判断により正式メンバーとして追加。
+- 変更箇所（名簿の単一の変更点のみ）:
+  - `gas-project/Code.gs`: `JISHA_REFERRER_OPTIONS` に `藤井勇大` を追加。`repStatusRepAliasMap_()` の `variants` に `"藤井勇大": ["藤井"]` を追加。**藤森宣哉 と苗字が近いが、`resolveRepCanonical_` は `normalizeName` の完全一致のみで引く**ため衝突しない（前方一致・あいまい照合は使っていない）。
+  - `payout-form/Code.gs`: `SALESPEOPLE` に追加。
+  - `フォーム顧客管理/main.js` と `index.html`: `SALES_STAFF` に追加、`SALES_STAFF_ALIASES` に `'藤井': '藤井勇大'` を追加（2ファイル同一内容を維持）。
+  - `index.html`(アフィリンク フロント) の `REFERRER_SUFFIX_MAP` は**未変更**。固定紹介者リンクは現状4名(-s/-m/-i/-e)のみで、必要になったら記号を割り当てる。
+- 実施手順（改修後の新手順を初めて通しで適用）: 名簿を編集 → `clasp push` → メニュー相当の `syncSalesRoster()` を1回実行、で全系統が揃った。旧手順のような再生成の別実行は不要になっている。
+- 本番反映（2026-07-24, shinhogle）:
+  - アフィリンク本体: `clasp push` 後、使い捨てデプロイ(@104)経由で `syncSalesRoster()` を実行し `undeploy`。**本番 `AKfycbznoqLyw…`(@101) は未変更**。フォームの紹介者選択肢は設定シートのデータ由来（`readConfig` が列6を読む）で、doGet/doPost は `JISHA_REFERRER_OPTIONS` を参照しないため、本番の再デプロイは不要と判断した。
+  - 振込先フォーム: `appsscript.json` に webapp 設定と鍵付き `doGet` を一時追加 → `clasp push` → 使い捨てデプロイ(@4)で `setup()` 実行 → `undeploy`、フックと webapp 設定をソースから除去して再 push。デプロイは元の1件(@HEAD)に復帰。
+  - フォーム顧客管理: `clasp push` → `clasp redeploy AKfycbxqy6u9…`(@18→@19、URL維持)。index.html は GAS が配信するため再デプロイが必要。
+- 結果:
+  - 紹介者選択肢17フォーム更新。顧客管理SS に `藤井勇大` タブ追加、SS1 に `総合_藤井勇大` タブ追加（SS2 の担当タブは既存だった）。
+  - SS2 `藤井勇大` = 1行 / SS1 `総合_藤井勇大` = 1行。**`excludedReferrers` が `{}` に解消**（3件の回答は同一顧客のため集計行は1）。`unmatchedCase` も `{}` のまま。
+  - SS1 `柳沢悠貴` が 14→13行。該当顧客のアフィリンク紹介者が藤井勇大のため、担当がアフィリンク優先で付け替わったもので設計どおり。
+  - 振込先フォーム実物の選択肢が10名になったことを公開URLのHTMLで確認。
+  - 3プロジェクトとも `clasp pull` で live==local・フック残骸0を確認。

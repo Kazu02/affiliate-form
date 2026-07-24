@@ -56,7 +56,7 @@ const SS1_ID = "1aaiCIDQIkrp_Ado5aKua_PTEQq4jr1UWqpuLQXwpemI"; // 統合顧客�
 // ===== 営業担当 名簿：単一の変更点 =====
 // メンバーの増減はこの配列を編集し、エディタで setup() を1回実行するだけ。
 // setup() が既存フォームの「紹介営業担当」選択肢をこの配列へ同期する。
-const SALESPEOPLE = ["柳沢悠貴", "岩本拓也", "菅原貴博", "村井亮介", "大島雅史", "小椋裕也", "細川貴弘", "藤森宣哉", "江口裕人"];
+const SALESPEOPLE = ["柳沢悠貴", "岩本拓也", "菅原貴博", "村井亮介", "大島雅史", "小椋裕也", "細川貴弘", "藤森宣哉", "江口裕人", "藤井勇大"];
 
 const OWNERSHIP_HEADER = "持ち家かどうか";
 const NAME_HEADER_CANDIDATES = ["名前", "顧客名", "お名前", "氏名"];
@@ -615,3 +615,4 @@ function clearPayoutForName() {
   Logger.log("clearPayoutForName: " + name + " -> " + JSON.stringify(cleared));
   return cleared;
 }
+

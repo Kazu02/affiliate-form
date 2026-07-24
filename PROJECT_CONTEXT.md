@@ -13,7 +13,7 @@
 ## Users And Stakeholders
 
 - **管理者**: shinhogle@gmail.com（市場作りプロジェクト全般）
-- **営業マン（自社）**: 柳沢悠貴, 岩本拓也, 菅原貴博, 村井亮介, 大島雅史, 小椋裕也, 細川貴弘, 藤森宣哉, 江口裕人（計9名）
+- **営業マン（自社）**: 柳沢悠貴, 岩本拓也, 菅原貴博, 村井亮介, 大島雅史, 小椋裕也, 細川貴弘, 藤森宣哉, 江口裕人, 藤井勇大（計10名）
 - **営業名簿の単一の変更点**: `Code.gs` の定数 `JISHA_REFERRER_OPTIONS`（カンマ区切り）。メンバー増減はここを編集し、スプレッドシートのメニュー「フォーム管理 > 営業担当を同期（選択肢＋担当タブ＋データ再生成）」を1回実行するだけ。`syncSalesRoster()` が以下を通しで行う:
   1. 全自社フォームの紹介者選択肢を再適用（`applyReferrerSelectToJishaSheets`）
   2. 顧客管理SSに担当タブを追加（`ensureCustomerMgmtTabs_`）
@@ -130,7 +130,7 @@ const ADVERTISER_SS_ID    = "1bnERIRl4-VmQ2QP9IwxuPco64huKzNC5qxHfyvCBUVg";
 const QUEST150_MONTH      = "2026/06";
 const QUEST150_SALESPEOPLE = ["岩本拓也", "菅原貴博", "村井亮介"]; // 150件クエスト専用の3名。名簿とは別管理
 // 営業名簿（単一の変更点）。メンバー増減はここ→メニュー「営業担当を同期」
-const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人";
+const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人,藤井勇大";
 ```
 
 ### 振込先フォーム（独立GASプロジェクト・2026-07新設）
@@ -140,7 +140,7 @@ const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮
 - フォーム: `アフィリエイト報酬 振込先のご登録`
   - formId `1AjakCgCyR1DwWzlcCbKaayuACAu5ray-Ic9c7slafs4`
   - 回答URL `https://docs.google.com/forms/d/e/1FAIpQLSd3AXOJrEwker1hKLATVtQpIbSZ4wWvAS5cAl-bbYQ46UKbZg/viewform`
-  - 設問: お名前(フルネーム) / 紹介営業担当(名簿 `SALESPEOPLE` から選択・現在9名) / 金融機関名 / 支店名 / 預金種目(普通・当座) / 口座番号 / 口座名義(カナ)
+  - 設問: お名前(フルネーム) / 紹介営業担当(名簿 `SALESPEOPLE` から選択・現在10名) / 金融機関名 / 支店名 / 預金種目(普通・当座) / 口座番号 / 口座名義(カナ)
 - 追記先: 統合顧客管理SS(SS1 `1aaiCIDQIkrp_Ado5aKua_PTEQq4jr1UWqpuLQXwpemI`)の「統合顧客管理」(マスター)＋「総合_<担当>」8タブ。`持ち家かどうか`(K列)の直後に6列(`金融機関名/支店名/預金種目/口座番号/口座名義(カナ)/振込先登録日時`)。
 - 照合: フルネームを `normalizeName` 正規化してあいまい照合(完全一致→先頭一致→編集距離1)。同名は紹介者(営業担当)で絞り込む。未照合は「振込先_未照合ログ」タブへ。
 - 主要関数: `runSetupAndSelfTest`(初回セットアップ＋自己検証) / `setup` / `onSubmit`(トリガー) / `writePayoutAll_` / `findMatchRow_` / `ensurePayoutColumns_` / 保守用に `selfTest`・`clearPayoutForName`・`readRowByName_`・`purgeFormResponses`・`cleanupHelperSheets`。

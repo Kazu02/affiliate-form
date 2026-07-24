@@ -27,7 +27,7 @@ const FORM_CODE_PATTERN = /^[a-zA-Z0-9_]+$/;
 // メンバーの増減はこのカンマ区切り文字列を編集し、スプレッドシートのメニュー
 // 「フォーム管理 > 営業担当を同期」を1回実行するだけ。
 // これで (1)全自社フォームの紹介者選択肢 (2)顧客管理SS/SS2の担当タブ が揃う。
-const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人";
+const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人,藤井勇大";
 
 // 150件クエスト設定
 const QUEST150_TARGET_TOTAL = 150;
@@ -2882,7 +2882,8 @@ function repStatusRepAliasMap_() {
     "小椋裕也": ["小椋"],
     "細川貴弘": ["細川"],
     "藤森宣哉": ["藤森"],
-    "江口裕人": ["江口"]
+    "江口裕人": ["江口"],
+    "藤井勇大": ["藤井"]
   };
   const map = {};
   JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (canon) {
