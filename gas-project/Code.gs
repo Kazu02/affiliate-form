@@ -47,6 +47,38 @@ const CAMPAIGN_FORM_NAMES = {
 const CAMPAIGN_TARGET  = 30;
 const CAMPAIGN_END_STR = "2026/05/31";
 
+// 緊急クエスト設定（2026/07/27〜07/31・毎日13時/20時にLINE報告）
+// 対象5案件の7月合計を 岩本拓也40件/その他40件/全体80件 で追いかける
+const EMERGENCY_FORMS = ["iekatsu", "livingmuch", "iei", "hokenmammoth", "deaeru"];
+const EMERGENCY_FORM_NAMES = {
+  "iekatsu":      "いえカツLIFE",
+  "livingmuch":   "リビンマッチ",
+  "iei":          "不動産一括査定イエイ",
+  "hokenmammoth": "保険マンモス",
+  "deaeru":       "出会えるエージェント"
+};
+const EMERGENCY_TARGET_TOTAL   = 80;
+const EMERGENCY_TARGET_IWAMOTO = 40;
+const EMERGENCY_TARGET_OTHERS  = 40;
+const EMERGENCY_IWAMOTO  = "岩本拓也";
+const EMERGENCY_END_STR  = "2026/07/31";
+const EMERGENCY_START_AT = "2026/07/27 10:00:00"; // この日時(JST)以降の受信のみカウント（過去分は含めない）
+const EMERGENCY_ADMIN_KEY = "24fc664ad29245569528ca0ed6fd2d06c602b377d9034e96";
+
+// 特別緊急クエスト設定（2026/07/27〜07/31・毎日13時/20時にLINE報告）
+// ノムコム1案件を 全体30件（岩本15/菅原10/江口3/藤井2）で追いかける
+const SPECIAL_QUEST_FORM      = "nomukomu";
+const SPECIAL_QUEST_FORM_NAME = "ノムコム";
+const SPECIAL_QUEST_TARGET_TOTAL = 30;
+const SPECIAL_QUEST_MEMBERS = [
+  { name: "岩本拓也", target: 15 },
+  { name: "菅原貴博", target: 10 },
+  { name: "江口裕人", target: 3 },
+  { name: "藤井勇大", target: 2 }
+];
+const SPECIAL_QUEST_END_STR  = "2026/07/31";
+const SPECIAL_QUEST_START_AT = "2026/07/27 00:00:00"; // この日時(JST)以降の受信のみカウント（過去分は含めない）
+
 // フォーム記号を設定シートの内部データ（A列）から取得
 // フォーム記号行がない場合はシート名サフィックスをフォールバックとして返す
 function getFormCodeFromSheet(sheet) {
@@ -76,6 +108,10 @@ function getConfigSheetByCode(ss, formCode) {
 // ---- GET: フォーム設定を返す ----
 function doGet(e) {
   try {
+    // 緊急クエスト管理ルート（期間限定・キー保護。クエスト終了後に削除可）
+    if (e && e.parameter && e.parameter.quest_admin === EMERGENCY_ADMIN_KEY) {
+      return handleEmergencyAdmin_(e.parameter.action || "status", e.parameter.quest || "emergency");
+    }
 const ss       = getOrCreateSpreadsheet();
     const formName = (e && e.parameter && e.parameter.form) ? e.parameter.form : getFirstFormCode(ss);
     const config   = readConfig(ss, formName);
@@ -424,6 +460,7 @@ function onOpen() {
   ensureDailyReportTrigger();
   ensureCampaignReportTrigger();
   ensureQuest150Trigger();
+  ensureEmergencyQuestTriggers();
   applyReferrerSelectToJishaSheets();
   SpreadsheetApp.getUi().createMenu("フォーム管理")
     .addItem("新規フォーム作成",       "showCreateFormDialog")
@@ -434,6 +471,8 @@ function onOpen() {
     .addItem("日次レポート（テスト送信）",           "dailyReport")
     .addItem("30件クエスト進捗（テスト送信）",       "campaignReport")
     .addItem("150件クエスト進捗（テスト送信）",     "quest150Report")
+    .addItem("緊急クエスト進捗（テスト送信）",       "emergencyQuestReportTest")
+    .addItem("特別緊急クエスト進捗（テスト送信）",   "specialQuestReportTest")
     .addSeparator()
     .addItem("回答ヘッダーを最新フィールドに同期", "fixAnswerHeaders")
     .addItem("シート名をフォーム名に変換（移行）", "migrateSheetNamesToDisplayName")
@@ -2656,6 +2695,451 @@ function ensureQuest150Trigger() {
   } catch (e) {
     Logger.log("quest150Report トリガー設置失敗: " + e);
   }
+}
+
+// =============================================
+// 緊急クエスト（2026/07/27〜07/31・毎日13時/20時）
+// =============================================
+
+// ---- 進捗レポート送信 ----
+// トリガーから呼ばれると第1引数はイベントオブジェクト（force扱いにならない）
+function emergencyQuestReport(force) {
+  const now    = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const p      = n => String(n).padStart(2, "0");
+  const todayJst = jstNow.getUTCFullYear() + "/" + p(jstNow.getUTCMonth()+1) + "/" + p(jstNow.getUTCDate());
+
+  // 期限後はトリガーを自動撤去して終了
+  if (todayJst > EMERGENCY_END_STR) {
+    removeEmergencyQuestTriggers_();
+    return null;
+  }
+
+  // 二重送信ガード（トリガーと手動送信の重複防止・50分以内はスキップ）
+  const props = PropertiesService.getScriptProperties();
+  if (force !== true) {
+    const last = Number(props.getProperty("EMERGENCY_QUEST_LAST_SENT") || 0);
+    if (new Date().getTime() - last < 50 * 60 * 1000) return null;
+  }
+
+  const message = buildEmergencyQuestMessage_();
+  notifyLineGroup(message);
+  props.setProperty("EMERGENCY_QUEST_LAST_SENT", String(new Date().getTime()));
+  Logger.log(message);
+  return message;
+}
+
+function emergencyQuestReportTest() {
+  const msg = emergencyQuestReport(true);
+  SpreadsheetApp.getUi().alert("送信しました\n\n" + String(msg || "").substring(0, 800));
+}
+
+// ---- レポート本文組み立て（送信なし・プレビュー可能） ----
+function buildEmergencyQuestMessage_() {
+  const now    = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const p      = n => String(n).padStart(2, "0");
+  const todayJst = jstNow.getUTCFullYear() + "/" + p(jstNow.getUTCMonth()+1) + "/" + p(jstNow.getUTCDate());
+
+  const todayMs  = new Date(todayJst.replace(/\//g, "-")).getTime();
+  const endMs    = new Date(EMERGENCY_END_STR.replace(/\//g, "-")).getTime();
+  const daysLeft = Math.max(1, Math.round((endMs - todayMs) / 86400000) + 1);
+
+  const ss = getOrCreateSpreadsheet();
+  const formCounts = {};
+  EMERGENCY_FORMS.forEach(fc => { formCounts[fc] = 0; });
+  let totalCount = 0;
+  let iwamotoCount = 0;
+  const startMs  = emergencyToEpochMs_(EMERGENCY_START_AT);
+  const endLimit = emergencyToEpochMs_(EMERGENCY_END_STR + " 23:59:59");
+
+  ss.getSheets().forEach(sheet => {
+    if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
+    const formCode = getFormCodeFromSheet(sheet);
+    if (!formCode || !EMERGENCY_FORMS.includes(formCode)) return;
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2 || lastCol < ANSWER_START_COL) return;
+    const headers = sheet.getRange(1, ANSWER_START_COL, 1, lastCol - ANSWER_START_COL + 1).getValues()[0];
+    const rtIdx   = headers.indexOf("受信日時");
+    const refIdx  = headers.indexOf("紹介者名");
+    if (rtIdx < 0) return;
+    sheet.getRange(2, ANSWER_START_COL, lastRow - 1, lastCol - ANSWER_START_COL + 1).getValues()
+      .forEach(row => {
+        const t = emergencyToEpochMs_(row[rtIdx]);
+        if (isNaN(t) || t < startMs || t > endLimit) return;
+        formCounts[formCode]++;
+        totalCount++;
+        if (refIdx >= 0 && normalizeName(String(row[refIdx] || "").trim()) === normalizeName(EMERGENCY_IWAMOTO)) {
+          iwamotoCount++;
+        }
+      });
+  });
+
+  const othersCount = totalCount - iwamotoCount;
+
+  const weekDays = ["日", "月", "火", "水", "木", "金", "土"];
+  const dow      = weekDays[jstNow.getUTCDay()];
+  const lines    = [];
+
+  lines.push("🚨【緊急クエスト】進捗レポート");
+  lines.push("📅 " + (jstNow.getUTCMonth()+1) + "/" + jstNow.getUTCDate() + "（" + dow + "）" +
+             p(jstNow.getUTCHours()) + ":" + p(jstNow.getUTCMinutes()) + "時点　残り" + daysLeft + "日");
+  lines.push("");
+
+  // 全体進捗
+  const totalRemain = Math.max(0, EMERGENCY_TARGET_TOTAL - totalCount);
+  const totalFilled = Math.min(10, Math.round(totalCount / EMERGENCY_TARGET_TOTAL * 10));
+  const totalBar    = "🟩".repeat(totalFilled) + "🟥".repeat(10 - totalFilled);
+  const totalPace   = totalRemain > 0
+    ? "あと" + totalRemain + "件（1日" + Math.ceil(totalRemain / daysLeft) + "件ペース）"
+    : "COMPLETE！";
+  lines.push("📊 全体進捗（5案件・7/27 10時〜）");
+  lines.push("　" + totalCount + " / " + EMERGENCY_TARGET_TOTAL + "件　" + totalPace);
+  lines.push("　" + totalBar);
+  lines.push("");
+
+  // 個人ノルマ（岩本 / その他）
+  lines.push("━━━━━━━━━━━━━━");
+  lines.push("🎯 個人ノルマ");
+  lines.push("");
+  [
+    { label: EMERGENCY_IWAMOTO,   count: iwamotoCount, target: EMERGENCY_TARGET_IWAMOTO },
+    { label: "その他メンバー計",  count: othersCount,  target: EMERGENCY_TARGET_OTHERS }
+  ].forEach(entry => {
+    const remain = Math.max(0, entry.target - entry.count);
+    const pct    = entry.count / entry.target;
+    const filled = Math.min(10, Math.round(pct * 10));
+    const bar    = "🟩".repeat(filled) + "🟥".repeat(10 - filled);
+    const pace   = remain > 0
+      ? "あと" + remain + "件（1日" + Math.ceil(remain / daysLeft) + "件ペース）"
+      : "COMPLETE！";
+    let icon;
+    if (entry.count >= entry.target) icon = "✅";
+    else if (pct >= 0.8) icon = "🔥";
+    else if (pct >= 0.6) icon = "⚡";
+    else if (pct >= 0.3) icon = "🌱";
+    else if (entry.count > 0) icon = "🚨";
+    else icon = "💀";
+    lines.push(icon + " " + entry.label);
+    lines.push("　" + entry.count + " / " + entry.target + "件　" + pace);
+    lines.push("　" + bar);
+    lines.push("");
+  });
+
+  // 案件別内訳
+  lines.push("━━━━━━━━━━━━━━");
+  lines.push("📋 案件別（7/27 10時〜）");
+  EMERGENCY_FORMS.forEach(fc => {
+    const name = EMERGENCY_FORM_NAMES[fc] || fc;
+    lines.push("・" + name + "：" + (formCounts[fc] || 0) + "件");
+    lines.push("　" + FORM_BASE_URL + "?form=" + fc);
+  });
+  lines.push("");
+
+  // 全体コメント
+  const overallPct = totalCount / EMERGENCY_TARGET_TOTAL;
+  let comment;
+  if (totalCount >= EMERGENCY_TARGET_TOTAL) comment = "🎊 目標達成！伝説の営業チームだ！";
+  else if (overallPct >= 0.8) comment = "💬 もうすぐだ！全力ラストスパート！";
+  else if (overallPct >= 0.6) comment = "💬 いい調子！このまま突き進め！";
+  else if (overallPct >= 0.3) comment = "💬 加速しろ！まだ十分間に合う！";
+  else if (totalCount > 0)    comment = "💬 ギアを上げろ！総力戦だ！";
+  else                        comment = "💬 DANGER！今すぐ動け！";
+  lines.push(comment);
+
+  return lines.join("\n");
+}
+
+// ---- 受信日時をエポックmsへ（Dateセル / "yyyy/MM/dd HH:mm:ss"文字列(JST)の両対応） ----
+function emergencyToEpochMs_(value) {
+  if (!value) return NaN;
+  if (value instanceof Date) return value.getTime();
+  const m = String(value).trim()
+    .match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!m) return NaN;
+  // JST文字列なので9時間引いてUTCエポックへ
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], (+(m[4] || 0)) - 9, +(m[5] || 0), +(m[6] || 0));
+}
+
+// ---- トリガー設置（毎日13時・20時） ----
+function ensureEmergencyQuestTriggers() {
+  try {
+    const now    = new Date();
+    const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const p      = n => String(n).padStart(2, "0");
+    const todayJst = jstNow.getUTCFullYear() + "/" + p(jstNow.getUTCMonth()+1) + "/" + p(jstNow.getUTCDate());
+
+    const existing = ScriptApp.getProjectTriggers()
+      .filter(t => t.getHandlerFunction() === "emergencyQuestReport");
+
+    if (todayJst > EMERGENCY_END_STR) {
+      existing.forEach(t => ScriptApp.deleteTrigger(t));
+      return { removed: existing.length, created: 0 };
+    }
+
+    // 2本（13時/20時）揃っていればそのまま。それ以外は作り直す
+    if (existing.length === 2) return { removed: 0, created: 0, existing: 2 };
+    existing.forEach(t => ScriptApp.deleteTrigger(t));
+    [13, 20].forEach(hour => {
+      ScriptApp.newTrigger("emergencyQuestReport")
+        .timeBased().everyDays(1).atHour(hour).create();
+    });
+    Logger.log("emergencyQuestReport トリガーを設置しました（毎日13時・20時）");
+    return { removed: existing.length, created: 2 };
+  } catch (e) {
+    Logger.log("emergencyQuestReport トリガー設置失敗: " + e);
+    return { error: String(e) };
+  }
+}
+
+function removeEmergencyQuestTriggers_() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === "emergencyQuestReport")
+    .forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+// =============================================
+// 特別緊急クエスト（ノムコム・2026/07/27〜07/31・毎日13時/20時）
+// =============================================
+
+// ---- 進捗レポート送信 ----
+// トリガーから呼ばれると第1引数はイベントオブジェクト（force扱いにならない）
+function specialQuestReport(force) {
+  const now    = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const p      = n => String(n).padStart(2, "0");
+  const todayJst = jstNow.getUTCFullYear() + "/" + p(jstNow.getUTCMonth()+1) + "/" + p(jstNow.getUTCDate());
+
+  // 期限後はトリガーを自動撤去して終了
+  if (todayJst > SPECIAL_QUEST_END_STR) {
+    removeSpecialQuestTriggers_();
+    return null;
+  }
+
+  // 二重送信ガード（トリガーと手動送信の重複防止・50分以内はスキップ）
+  const props = PropertiesService.getScriptProperties();
+  if (force !== true) {
+    const last = Number(props.getProperty("SPECIAL_QUEST_LAST_SENT") || 0);
+    if (new Date().getTime() - last < 50 * 60 * 1000) return null;
+  }
+
+  const message = buildSpecialQuestMessage_();
+  notifyLineGroup(message);
+  props.setProperty("SPECIAL_QUEST_LAST_SENT", String(new Date().getTime()));
+  Logger.log(message);
+  return message;
+}
+
+function specialQuestReportTest() {
+  const msg = specialQuestReport(true);
+  SpreadsheetApp.getUi().alert("送信しました\n\n" + String(msg || "").substring(0, 800));
+}
+
+// ---- レポート本文組み立て（送信なし・プレビュー可能） ----
+function buildSpecialQuestMessage_() {
+  const now    = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const p      = n => String(n).padStart(2, "0");
+  const todayJst = jstNow.getUTCFullYear() + "/" + p(jstNow.getUTCMonth()+1) + "/" + p(jstNow.getUTCDate());
+
+  const todayMs  = new Date(todayJst.replace(/\//g, "-")).getTime();
+  const endMs    = new Date(SPECIAL_QUEST_END_STR.replace(/\//g, "-")).getTime();
+  const daysLeft = Math.max(1, Math.round((endMs - todayMs) / 86400000) + 1);
+
+  const ss       = getOrCreateSpreadsheet();
+  const aliasMap = repStatusRepAliasMap_();
+  const counts   = {};
+  SPECIAL_QUEST_MEMBERS.forEach(m => { counts[m.name] = 0; });
+  let totalCount = 0;
+  let namedCount = 0;
+  const startMs  = emergencyToEpochMs_(SPECIAL_QUEST_START_AT);
+  const endLimit = emergencyToEpochMs_(SPECIAL_QUEST_END_STR + " 23:59:59");
+
+  const sheet = getConfigSheetByCode(ss, SPECIAL_QUEST_FORM);
+  if (sheet) {
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow >= 2 && lastCol >= ANSWER_START_COL) {
+      const headers = sheet.getRange(1, ANSWER_START_COL, 1, lastCol - ANSWER_START_COL + 1).getValues()[0];
+      const rtIdx   = headers.indexOf("受信日時");
+      const refIdx  = headers.indexOf("紹介者名");
+      if (rtIdx >= 0) {
+        sheet.getRange(2, ANSWER_START_COL, lastRow - 1, lastCol - ANSWER_START_COL + 1).getValues()
+          .forEach(row => {
+            const t = emergencyToEpochMs_(row[rtIdx]);
+            if (isNaN(t) || t < startMs || t > endLimit) return;
+            totalCount++;
+            if (refIdx < 0) return;
+            // 「岩本」「松田恵美（岩本拓也）」等の表記ゆれも正規名へ寄せる
+            const canon = resolveRepCanonical_(String(row[refIdx] || "").trim(), aliasMap);
+            if (canon && counts.hasOwnProperty(canon)) {
+              counts[canon]++;
+              namedCount++;
+            }
+          });
+      }
+    }
+  }
+
+  const othersCount = Math.max(0, totalCount - namedCount);
+
+  const weekDays = ["日", "月", "火", "水", "木", "金", "土"];
+  const dow      = weekDays[jstNow.getUTCDay()];
+  const lines    = [];
+
+  lines.push("⚡【特別緊急クエスト】" + SPECIAL_QUEST_FORM_NAME);
+  lines.push("📅 " + (jstNow.getUTCMonth()+1) + "/" + jstNow.getUTCDate() + "（" + dow + "）" +
+             p(jstNow.getUTCHours()) + ":" + p(jstNow.getUTCMinutes()) + "時点　残り" + daysLeft + "日");
+  lines.push("");
+
+  // 全体進捗
+  const totalRemain = Math.max(0, SPECIAL_QUEST_TARGET_TOTAL - totalCount);
+  const totalFilled = Math.min(10, Math.round(totalCount / SPECIAL_QUEST_TARGET_TOTAL * 10));
+  const totalBar    = "🟩".repeat(totalFilled) + "🟥".repeat(10 - totalFilled);
+  const totalPace   = totalRemain > 0
+    ? "あと" + totalRemain + "件（1日" + Math.ceil(totalRemain / daysLeft) + "件ペース）"
+    : "COMPLETE！";
+  lines.push("📊 全体進捗（7/27〜7/31）");
+  lines.push("　" + totalCount + " / " + SPECIAL_QUEST_TARGET_TOTAL + "件　" + totalPace);
+  lines.push("　" + totalBar);
+  lines.push("");
+
+  // 個人ノルマ
+  lines.push("━━━━━━━━━━━━━━");
+  lines.push("🎯 個人ノルマ");
+  lines.push("");
+  SPECIAL_QUEST_MEMBERS.forEach(entry => {
+    const count  = counts[entry.name] || 0;
+    const remain = Math.max(0, entry.target - count);
+    const pct    = count / entry.target;
+    const filled = Math.min(10, Math.round(pct * 10));
+    const bar    = "🟩".repeat(filled) + "🟥".repeat(10 - filled);
+    const pace   = remain > 0
+      ? "あと" + remain + "件（1日" + Math.ceil(remain / daysLeft) + "件ペース）"
+      : "COMPLETE！";
+    let icon;
+    if (count >= entry.target) icon = "✅";
+    else if (pct >= 0.8) icon = "🔥";
+    else if (pct >= 0.6) icon = "⚡";
+    else if (pct >= 0.3) icon = "🌱";
+    else if (count > 0)  icon = "🚨";
+    else icon = "💀";
+    lines.push(icon + " " + entry.name);
+    lines.push("　" + count + " / " + entry.target + "件　" + pace);
+    lines.push("　" + bar);
+    lines.push("");
+  });
+  if (othersCount > 0) {
+    lines.push("（その他メンバー：" + othersCount + "件）");
+    lines.push("");
+  }
+
+  // エントリー先
+  lines.push("━━━━━━━━━━━━━━");
+  lines.push("📋 " + SPECIAL_QUEST_FORM_NAME + " エントリーはこちら");
+  lines.push("　" + FORM_BASE_URL + "?form=" + SPECIAL_QUEST_FORM);
+  lines.push("");
+
+  // 全体コメント
+  const overallPct = totalCount / SPECIAL_QUEST_TARGET_TOTAL;
+  let comment;
+  if (totalCount >= SPECIAL_QUEST_TARGET_TOTAL) comment = "🎊 30件達成！特別クエストCLEAR！";
+  else if (overallPct >= 0.8) comment = "💬 ゴールは目前！最後まで走り切れ！";
+  else if (overallPct >= 0.6) comment = "💬 いいペース！このまま押し切れ！";
+  else if (overallPct >= 0.3) comment = "💬 折り返しへ！ノムコムに集中！";
+  else if (totalCount > 0)    comment = "💬 スタートダッシュだ！ここから伸ばそう！";
+  else                        comment = "💬 まずは1件！ノムコムを動かせ！";
+  lines.push(comment);
+
+  return lines.join("\n");
+}
+
+// ---- トリガー設置（毎日13時・20時） ----
+function ensureSpecialQuestTriggers() {
+  try {
+    const now    = new Date();
+    const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const p      = n => String(n).padStart(2, "0");
+    const todayJst = jstNow.getUTCFullYear() + "/" + p(jstNow.getUTCMonth()+1) + "/" + p(jstNow.getUTCDate());
+
+    const existing = ScriptApp.getProjectTriggers()
+      .filter(t => t.getHandlerFunction() === "specialQuestReport");
+
+    if (todayJst > SPECIAL_QUEST_END_STR) {
+      existing.forEach(t => ScriptApp.deleteTrigger(t));
+      return { removed: existing.length, created: 0 };
+    }
+
+    // 2本（13時/20時）揃っていればそのまま。それ以外は作り直す
+    if (existing.length === 2) return { removed: 0, created: 0, existing: 2 };
+    existing.forEach(t => ScriptApp.deleteTrigger(t));
+    [13, 20].forEach(hour => {
+      ScriptApp.newTrigger("specialQuestReport")
+        .timeBased().everyDays(1).atHour(hour).create();
+    });
+    Logger.log("specialQuestReport トリガーを設置しました（毎日13時・20時）");
+    return { removed: existing.length, created: 2 };
+  } catch (e) {
+    Logger.log("specialQuestReport トリガー設置失敗: " + e);
+    return { error: String(e) };
+  }
+}
+
+function removeSpecialQuestTriggers_() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === "specialQuestReport")
+    .forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+// ---- 管理ルート（doGetから・キー保護） ----
+// quest=special で特別緊急クエスト（ノムコム）側を操作する
+function handleEmergencyAdmin_(action, quest) {
+  const isSpecial = (quest === "special");
+  const out = { action: action, quest: isSpecial ? "special" : "emergency" };
+  try {
+    if (action === "listforms") {
+      const ss = getOrCreateSpreadsheet();
+      out.forms = [];
+      ss.getSheets().forEach(sheet => {
+        if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
+        const vals = sheet.getDataRange().getValues();
+        let agency = AGENCY_DEFAULT, name = "";
+        for (const row of vals) {
+          if (String(row[0]) === AGENCY_KEY  && String(row[1] || "").trim()) agency = String(row[1]).trim();
+          if (String(row[0]) === FORM_NAME_KEY && String(row[1] || "").trim()) name = String(row[1]).trim();
+        }
+        out.forms.push({
+          sheet:  sheet.getName(),
+          code:   getFormCodeFromSheet(sheet),
+          name:   name,
+          agency: agency,
+          rows:   Math.max(0, sheet.getLastRow() - 1)
+        });
+      });
+    } else if (action === "preview") {
+      out.message = isSpecial ? buildSpecialQuestMessage_() : buildEmergencyQuestMessage_();
+    } else if (action === "send") {
+      out.message = isSpecial ? specialQuestReport(true) : emergencyQuestReport(true);
+      out.sent = out.message !== null;
+    } else if (action === "setup") {
+      out.result = isSpecial ? ensureSpecialQuestTriggers() : ensureEmergencyQuestTriggers();
+    } else if (action === "status") {
+      const props   = PropertiesService.getScriptProperties();
+      const handler = isSpecial ? "specialQuestReport" : "emergencyQuestReport";
+      out.lineTokenSet = !!props.getProperty("LINE_CHANNEL_TOKEN");
+      out.lineGroupSet = !!props.getProperty("LINE_GROUP_ID");
+      out.lastSent     = props.getProperty(isSpecial ? "SPECIAL_QUEST_LAST_SENT" : "EMERGENCY_QUEST_LAST_SENT") || null;
+      out.questTriggers = ScriptApp.getProjectTriggers()
+        .filter(t => t.getHandlerFunction() === handler).length;
+    } else {
+      out.error = "unknown action";
+    }
+  } catch (e) {
+    out.error = String(e);
+  }
+  return ContentService.createTextOutput(JSON.stringify(out))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ---- 既存フォーム回答を広告主成果管理シートへ一括インポート ----

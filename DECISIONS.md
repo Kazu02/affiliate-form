@@ -140,3 +140,15 @@
   - SS1 `柳沢悠貴` が 14→13行。該当顧客のアフィリンク紹介者が藤井勇大のため、担当がアフィリンク優先で付け替わったもので設計どおり。
   - 振込先フォーム実物の選択肢が10名になったことを公開URLのHTMLで確認。
   - 3プロジェクトとも `clasp pull` で live==local・フック残骸0を確認。
+
+## 2026-07-27: 特別緊急クエスト（ノムコム・30件）を緊急クエストと並走で開始
+
+- 背景: 同日開始の緊急クエスト（5案件・全体80件・7/27 10時〜7/31）に加え、ノムコム単独の特別枠を7/31まで走らせる依頼。全体30件、内訳は 岩本拓也15 / 菅原貴博10 / 江口裕人3 / 藤井勇大2（合計がちょうど30）。
+- Decision 1: 既存の緊急クエストに項目を足し込まず、**独立したレポート**（`specialQuestReport` / `buildSpecialQuestMessage_` / `ensureSpecialQuestTriggers`）として実装した。1通のメッセージに両クエストを詰めると長大になり、終了後の撤去も互いに絡むため。送信時刻は緊急クエストと同じ毎日13時・20時で、LINEには2通が並ぶ。
+- Decision 2: 集計対象は `SPECIAL_QUEST_FORM = "nomukomu"`（表示名 ノムコム、自社=house）の1シートのみ。`getConfigSheetByCode` で直接引く。期間は `SPECIAL_QUEST_START_AT = 2026/07/27 00:00:00` 〜 `SPECIAL_QUEST_END_STR = 2026/07/31 23:59:59`。**本日分から数える**ため、それ以前の既存11件は対象外。
+- Decision 3: 紹介者名の照合は緊急クエスト（`normalizeName` 完全一致のみ）ではなく `repStatusRepAliasMap_()` + `resolveRepCanonical_()` を再利用した。「岩本」など苗字のみ、「松田恵美（岩本拓也）」など括弧内表記も正規名へ寄る。名簿10名の正規名以外は個人ノルマに載らず、全体件数のみに入って「その他メンバー」行に出る。
+- Decision 4: 管理ルート（`?quest_admin=<キー>`）に `quest=special` を追加し、`preview|send|setup|status` を緊急/特別で切り替えられるようにした。二重送信ガードのプロパティも `SPECIAL_QUEST_LAST_SENT` で独立。
+- 本番反映（2026-07-27, shinhogle）: `clasp push` 後、**一時デプロイ `AKfycbwn--vmqogeWbeonVQ…` を @108→@109 に redeploy**（管理ルート専用の使い捨て。本番 `AKfycbznoqLyw…`(@101) は未変更）。旧@108は古いコードを配信していてクエスト切替が効かなかったため、redeployが必須だった。
+- 検証: `action=preview&quest=special` で本文生成（622文字・改行20・リテラル `\n` 0件）を確認 → `action=setup&quest=special` でトリガー2本作成 → `action=send&quest=special` でLINEグループへ初回送信成功。緊急クエスト側のトリガー2本・`lastSent` が無傷であることを `action=status`（quest未指定）で確認。
+- 初回時点の実績: 全体3件（岩本拓也1・菅原貴博2）。
+- 撤去予定: 7/31終了後、両クエストのトリガーは初回実行時に自動削除される（`todayJst > END` で `remove…Triggers_()`）。管理ルート・一時デプロイ・定数ブロックは手動で撤去する。
