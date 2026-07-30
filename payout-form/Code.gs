@@ -5,6 +5,14 @@
  * - onSubmit(e): 回答を受け取り、統合顧客管理ブック(SS1)の各営業担当シートで
  *   フルネームを名寄せ照合し、「持ち家かどうか」列の直後に振込先情報を書き込む。
  * - inspect(): SS1 の構造(タブ名・ヘッダー・持ち家/名前列位置)を調べて返す。
+ * - ensureResponseDestination(): フォームの回答先を SS1 に紐づけ、回答台帳を確保する。
+ * - reapplyAllFormResponses(dryRun): 過去の全回答を顧客行へ適用し直す（復旧用）。
+ *
+ * 回答の追跡経路は2本ある。どちらも欠けると復旧できなくなるので外さないこと:
+ *   1. 回答台帳（SS1 の「振込先_回答台帳」）… Google フォームが自動で書き込む生の回答
+ *   2. 未照合ログ（SS1 の「振込先_未照合ログ」）… 顧客行へ書けなかった回答と理由
+ * 顧客行への反映は onSubmit が行うが、統合顧客管理は別GASプロジェクト(フォーム顧客管理)の
+ * 再構築で書き換わるため、顧客行だけを唯一の記録にしてはいけない（2026-07-30の事故）。
  *
  * 実行アカウント: shinhogle@gmail.com
  */
@@ -81,6 +89,13 @@ const REFERRER_HEADER_CANDIDATES = ["営業担当", "紹介者名", "紹介者"]
 // ScriptProperties キー
 const PROP_FORM_ID = "PAYOUT_FORM_ID";
 const PROP_UNMATCHED_SHEET = "振込先_未照合ログ";
+
+// フォームの回答先（回答台帳）タブ名。SS1 に置く。
+// このフォームは長らく回答先スプレッドシートを持たず、回答の実体が Google フォーム本体に
+// しか無かった。そのため onSubmit で書き込みに成功した回答はどこにも記録が残らず、
+// 統合顧客管理の再構築で振込先列が消えると痕跡ゼロで失われていた（2026-07-30の事故）。
+// 台帳を常に残すことで、同じことが起きても人が目で追える／復旧できるようにする。
+const PAYOUT_RESPONSE_SHEET = "振込先_回答台帳";
 
 // ===== 名寄せユーティリティ =====
 function toHiragana(str) {
@@ -406,6 +421,7 @@ function setup() {
     syncFormChoices_(f); // 紹介営業担当の選択肢を名簿(SALESPEOPLE)へ同期
     ensurePayoutColumnsAllSheets();
     ensureSubmitTrigger_(existing);
+    ensureResponseDestination(); // 回答台帳を必ず持たせる（再発防止）
     var reusedResult = { formId: existing, publishedUrl: f.getPublishedUrl(), editUrl: f.getEditUrl(), reused: true };
     writeMeta_(reusedResult);
     return reusedResult;
@@ -460,6 +476,9 @@ function setup() {
 
   // 送信トリガー登録
   ensureSubmitTrigger_(formId);
+
+  // 回答台帳を必ず持たせる（回答の実体がフォーム本体にしか無い状態を作らない）
+  ensureResponseDestination();
 
   var result = { formId: formId, publishedUrl: form.getPublishedUrl(), editUrl: form.getEditUrl(), reused: false };
   writeMeta_(result);
@@ -704,11 +723,68 @@ function retryUnmatchedPayouts() {
   return out;
 }
 
+// ===== 回答台帳の確保（再発防止・冪等） =====
+// フォームの回答先スプレッドシートを SS1 に紐づけ、回答タブを PAYOUT_RESPONSE_SHEET へ改名する。
+// 紐づけた時点で「それまでの全回答」も台帳へ取り込まれるので、過去分の台帳も同時に手に入る。
+// 既に SS1 へ紐づいていれば何もしない（何度実行してもよい）。
+// 注意: 回答タブは Google フォームが自動で書き込む。人が編集・削除しないこと。
+//       台帳はあくまで保険で、顧客行への反映は従来どおり onSubmit が行う。
+function ensureResponseDestination() {
+  var formId = PropertiesService.getScriptProperties().getProperty(PROP_FORM_ID);
+  if (!formId) return { error: "PAYOUT_FORM_ID 未設定" };
+  var form = FormApp.openById(formId);
+
+  var before = null;
+  try { before = form.getDestinationId(); } catch (e) { before = null; }
+
+  var linked = false;
+  if (before !== SS1_ID) {
+    // 別のブックに紐づいていたら一旦外す（そのブックの既存タブは消えない）
+    if (before) { try { form.removeDestination(); } catch (e2) {} }
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, SS1_ID);
+    linked = true;
+    SpreadsheetApp.flush();
+  }
+
+  // 自動生成された「フォームの回答 N」タブを分かりやすい名前へ改名する。
+  // 紐づけはシートIDで保持されるので、改名しても書き込みは続く。
+  var ss = SpreadsheetApp.openById(SS1_ID);
+  var ledger = ss.getSheetByName(PAYOUT_RESPONSE_SHEET);
+  if (!ledger) {
+    var cands = ss.getSheets().filter(function (sh) {
+      return /^フォームの回答/.test(sh.getName()) && isPayoutResponseSheet_(sh);
+    });
+    if (cands.length) {
+      ledger = cands[cands.length - 1]; // 同名タブが複数あれば新しい方
+      ledger.setName(PAYOUT_RESPONSE_SHEET);
+    }
+  }
+
+  var out = {
+    linked: linked,
+    destinationId: form.getDestinationId(),
+    ledgerSheet: ledger ? ledger.getName() : "(未検出)",
+    ledgerRows: ledger ? Math.max(0, ledger.getLastRow() - 1) : 0,
+    formResponses: form.getResponses().length
+  };
+  Logger.log("ensureResponseDestination: " + JSON.stringify(out));
+  return out;
+}
+
+// 回答タブかどうかを、ヘッダーに氏名設問があるかで判定する
+function isPayoutResponseSheet_(sheet) {
+  if (sheet.getLastRow() < 1 || sheet.getLastColumn() < 1) return false;
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
+  return headers.indexOf(Q_NAME) >= 0;
+}
+
 // ===== フォーム回答からの一括再適用（保守用・エディタから実行） =====
 // このフォームは回答先スプレッドシートを持たず、回答の実体は Google フォーム本体にしかない。
 // そのため onSubmit で一度書けた回答がシート側で失われると、未照合ログにも残らず復元経路が無い
 // （未照合ログは「書けなかった回答」だけを記録するため）。
-// この関数はフォームの全回答を読み直して顧客行へ適用し直す。過去分をまとめて復旧するための唯一の経路。
+// この関数はフォームの全回答を読み直して顧客行へ適用し直す。過去分をまとめて復旧するための経路。
+// （2026-07-30以降は ensureResponseDestination() で回答台帳も持たせているので、追跡経路は二重になっている）
 //   reapplyAllFormResponses(true)  … 下見。書き込みは一切せず、どこに入るかだけ返す。
 //   reapplyAllFormResponses()      … 実適用。
 // 回答は古い順に適用するので、同一人物が複数回登録していれば最新の回答が最終値になる。
