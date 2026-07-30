@@ -542,7 +542,8 @@ function onSubmit(e) {
 
 // マスター(統合顧客管理)と該当営業担当タブ(総合_<担当>)の両方に振込先を書き込む。
 // 総合_ タブは統合顧客管理から再生成されるため、マスターにも書くことで消失を防ぐ。
-function writePayoutAll_(fullName, referrer, payout) {
+// dryRun=true のときは照合だけ行い、列追加も書き込みも一切しない（復旧前の下見用）。
+function writePayoutAll_(fullName, referrer, payout, dryRun) {
   if (!fullName) return { wrote: [], reason: "氏名未入力", weak: [] };
   var ss = SpreadsheetApp.openById(SS1_ID);
   var wrote = [];
@@ -559,11 +560,16 @@ function writePayoutAll_(fullName, referrer, payout) {
       mweak = mrow > 0;
     }
     if (mrow > 0) {
-      var mcol = ensurePayoutColumns_(master);
-      if (mcol > 0) {
-        writePayoutRow_(master, mrow, mcol, payout);
-        wrote.push({ sheet: master.getName(), row: mrow, startCol: mcol, weak: mweak });
+      if (dryRun) {
+        wrote.push({ sheet: master.getName(), row: mrow, startCol: 0, weak: mweak, name: nameAt_(master, mrow) });
         if (mweak) weak.push(master.getName() + "#" + mrow + "→" + nameAt_(master, mrow));
+      } else {
+        var mcol = ensurePayoutColumns_(master);
+        if (mcol > 0) {
+          writePayoutRow_(master, mrow, mcol, payout);
+          wrote.push({ sheet: master.getName(), row: mrow, startCol: mcol, weak: mweak });
+          if (mweak) weak.push(master.getName() + "#" + mrow + "→" + nameAt_(master, mrow));
+        }
       }
     }
   }
@@ -586,11 +592,16 @@ function writePayoutAll_(fullName, referrer, payout) {
     if (wrow > 0) hit = { sheet: ordered[s2], row: wrow, weak: true };
   }
   if (hit) {
-    var col = ensurePayoutColumns_(hit.sheet);
-    if (col > 0) {
-      writePayoutRow_(hit.sheet, hit.row, col, payout);
-      wrote.push({ sheet: hit.sheet.getName(), row: hit.row, startCol: col, weak: hit.weak });
+    if (dryRun) {
+      wrote.push({ sheet: hit.sheet.getName(), row: hit.row, startCol: 0, weak: hit.weak, name: nameAt_(hit.sheet, hit.row) });
       if (hit.weak) weak.push(hit.sheet.getName() + "#" + hit.row + "→" + nameAt_(hit.sheet, hit.row));
+    } else {
+      var col = ensurePayoutColumns_(hit.sheet);
+      if (col > 0) {
+        writePayoutRow_(hit.sheet, hit.row, col, payout);
+        wrote.push({ sheet: hit.sheet.getName(), row: hit.row, startCol: col, weak: hit.weak });
+        if (hit.weak) weak.push(hit.sheet.getName() + "#" + hit.row + "→" + nameAt_(hit.sheet, hit.row));
+      }
     }
   }
 
@@ -690,6 +701,66 @@ function retryUnmatchedPayouts() {
   }
   var out = { retried: retried, resolved: resolved, detail: detail };
   Logger.log("retryUnmatchedPayouts: " + JSON.stringify(out));
+  return out;
+}
+
+// ===== フォーム回答からの一括再適用（保守用・エディタから実行） =====
+// このフォームは回答先スプレッドシートを持たず、回答の実体は Google フォーム本体にしかない。
+// そのため onSubmit で一度書けた回答がシート側で失われると、未照合ログにも残らず復元経路が無い
+// （未照合ログは「書けなかった回答」だけを記録するため）。
+// この関数はフォームの全回答を読み直して顧客行へ適用し直す。過去分をまとめて復旧するための唯一の経路。
+//   reapplyAllFormResponses(true)  … 下見。書き込みは一切せず、どこに入るかだけ返す。
+//   reapplyAllFormResponses()      … 実適用。
+// 回答は古い順に適用するので、同一人物が複数回登録していれば最新の回答が最終値になる。
+// 振込先登録日時は再適用した日ではなく、その回答の送信日時を入れる。
+function reapplyAllFormResponses(dryRun) {
+  var formId = PropertiesService.getScriptProperties().getProperty(PROP_FORM_ID);
+  if (!formId) return { error: "PAYOUT_FORM_ID 未設定" };
+  var responses = FormApp.openById(formId).getResponses();
+
+  var list = [];
+  for (var i = 0; i < responses.length; i++) {
+    var answers = {};
+    var items = responses[i].getItemResponses();
+    for (var j = 0; j < items.length; j++) {
+      answers[items[j].getItem().getTitle().trim()] = String(items[j].getResponse() || "").trim();
+    }
+    var at = responses[i].getTimestamp();
+    list.push({
+      at: at,
+      fullName: answers[Q_NAME] || "",
+      referrer: answers[Q_REFERRER] || "",
+      payout: [
+        answers[Q_BANK] || "", answers[Q_BRANCH] || "", answers[Q_ACCTTYPE] || "",
+        answers[Q_ACCTNUM] || "", answers[Q_HOLDER] || "", formatTimestamp_(at)
+      ]
+    });
+  }
+  list.sort(function (a, b) { return a.at - b.at; }); // 古い順＝最新が最後に勝つ
+
+  var out = { total: list.length, resolved: 0, unresolved: 0, weak: 0, dryRun: !!dryRun, detail: [] };
+  for (var k = 0; k < list.length; k++) {
+    var it = list[k];
+    var res = writePayoutAll_(it.fullName, it.referrer, it.payout, dryRun);
+    var isWeak = res.weak && res.weak.length;
+    if (res.wrote.length) {
+      out.resolved++;
+      if (isWeak) out.weak++;
+    } else {
+      out.unresolved++;
+    }
+    out.detail.push({
+      at: formatTimestamp_(it.at),
+      name: it.fullName,
+      ref: it.referrer,
+      bank: it.payout[0],
+      to: res.wrote.map(function (w) { return w.sheet + "#" + w.row + (w.name ? "→" + w.name : ""); }),
+      weak: isWeak ? res.weak : [],
+      reason: res.wrote.length ? "" : res.reason
+    });
+  }
+  Logger.log("reapplyAllFormResponses(dryRun=" + !!dryRun + "): " +
+    JSON.stringify({ total: out.total, resolved: out.resolved, unresolved: out.unresolved, weak: out.weak }));
   return out;
 }
 
