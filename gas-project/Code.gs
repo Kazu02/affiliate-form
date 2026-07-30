@@ -117,7 +117,8 @@ function doGet(e) {
     }
     // 広告主成果管理シートの保守ルート（キー保護。月指定の再生成と件数確認のみ）
     if (e && e.parameter && e.parameter.adv_admin === ADVERTISER_ADMIN_KEY) {
-      return handleAdvertiserAdmin_(e.parameter.action || "preview", e.parameter.months || "");
+      return handleAdvertiserAdmin_(e.parameter.action || "preview", e.parameter.months || "",
+                                    e.parameter.backup === "1");
     }
 const ss       = getOrCreateSpreadsheet();
     const formName = (e && e.parameter && e.parameter.form) ? e.parameter.form : getFirstFormCode(ss);
@@ -3404,7 +3405,8 @@ function previewAdvertiserMonths_(months) {
       approved: s.approved,
       trackingMissing: s.trackingMissing,
       sheetExists: !!sheet,
-      currentRows: sheet ? Math.max(0, sheet.getLastRow() - (ADVERTISER_DATA_START_ROW - 1)) : 0
+      // getLastRow は書式やチェックボックスだけの行も拾うので、A列に値がある行を実データとして数える
+      current: sheet ? countAdvertiserSheetRows_(sheet) : null
     };
   });
 
@@ -3415,6 +3417,38 @@ function previewAdvertiserMonths_(months) {
     advertiserSheets: advertiserSS.getSheets()
       .map(sh => sh.getName()).filter(n => /^\d{6}$/.test(n))
   };
+}
+
+// ---- 広告主シート1枚の実データ行数とチェック数を数える（PIIは返さない）----
+function countAdvertiserSheetRows_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < ADVERTISER_DATA_START_ROW) {
+    return { lastRow: lastRow, rows: 0, approved: 0, trackingMissing: 0 };
+  }
+  const n    = lastRow - ADVERTISER_DATA_START_ROW + 1;
+  const vals = sheet.getRange(ADVERTISER_DATA_START_ROW, 1, n, 7).getValues();
+  let rows = 0, approved = 0, trackingMissing = 0;
+  vals.forEach(r => {
+    if (String(r[0]).trim() === "") return;
+    rows++;
+    if (r[5] === true) trackingMissing++;
+    if (r[6] === true) approved++;
+  });
+  return { lastRow: lastRow, rows: rows, approved: approved, trackingMissing: trackingMissing };
+}
+
+// ---- 広告主成果管理SSをまるごとDriveに複製してバックアップする ----
+// 上書きを伴う再生成の前に必ず取る（2026-06-29の再インポート時と同じ運用）
+function backupAdvertiserSpreadsheet_(label) {
+  const src  = DriveApp.getFileById(ADVERTISER_SS_ID);
+  const jst  = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+  const p    = n => String(n).padStart(2, "0");
+  const stamp = jst.getUTCFullYear() + p(jst.getUTCMonth() + 1) + p(jst.getUTCDate()) +
+                "-" + p(jst.getUTCHours()) + p(jst.getUTCMinutes());
+  const name = src.getName() + " バックアップ " + stamp + (label ? " " + label : "");
+  const copy = src.makeCopy(name);
+  Logger.log("広告主SSをバックアップ: " + name + " / " + copy.getId());
+  return { id: copy.getId(), name: name, url: "https://docs.google.com/spreadsheets/d/" + copy.getId() + "/edit" };
 }
 
 // ---- 当月と翌月の広告主シートを先回りして用意する ----
@@ -3450,13 +3484,17 @@ function ensureAdvertiserMonthTrigger() {
 
 // ---- 広告主シート保守ルート（doGet から adv_admin キー付きで呼ばれる）----
 // action=preview … 書き込まずに件数と現状を返す / action=rebuild … 月指定で再生成
-// action=ensuremonths … 当月・翌月シートを用意し、月次トリガーを登録する
-function handleAdvertiserAdmin_(action, months) {
+// action=backup … SSまるごとDriveに複製 / action=ensuremonths … 当月・翌月シート＋月次トリガー
+// rebuild に &backup=1 を付けると、書き込む直前に同じ実行でバックアップを取る
+function handleAdvertiserAdmin_(action, months, backup) {
   const out = { action: action, months: months };
   try {
     if (action === "preview") {
       out.result = previewAdvertiserMonths_(months);
+    } else if (action === "backup") {
+      out.result = backupAdvertiserSpreadsheet_("");
     } else if (action === "rebuild") {
+      if (backup) out.backup = backupAdvertiserSpreadsheet_("(" + normalizeAdvertiserMonths_(months).join("_") + "再生成前)");
       out.result = importAdvertiserMonthsCore_(months);
     } else if (action === "ensuremonths") {
       out.result = {
