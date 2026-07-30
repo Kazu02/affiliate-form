@@ -106,7 +106,16 @@ clasp deploy -i <Deploy ID>
 
 - 行1: タイトル行（空またはラベル）
 - 行2: ヘッダー行
-- 行3以降: データ行
+- 行3以降: データ行（`ADVERTISER_DATA_START_ROW` = 3）
+
+#### 月別シートの運用
+
+- シートが無い月は `writeToAdvertiserSheet` が成果を**黙って捨てる**。2026年7月に実際1か月分落ちた。
+- 対策として `ensureAdvertiserMonthSheets()` が当月・翌月のシートを先回り作成する。**毎月25日3時の月次トリガー**で自動実行（トリガーは最新の保存コードで動くので本番デプロイの版に依存しない）。
+- 特定の月だけ作り直したいときはメニュー「広告主シートを月指定で再生成」。全月版と違い、指定しなかった月には触れない。
+- チャットからの実行は一時デプロイの保守ルート:
+  `?adv_admin=<キー>&action=preview|rebuild|ensuremonths&months=202607,202608`
+  （`preview` は書き込まずに件数と現状を返す。本番デプロイにはこのルートは載せていない）
 
 ### ScriptProperties（主要キー）
 
@@ -127,6 +136,7 @@ clasp deploy -i <Deploy ID>
 const ANSWER_START_COL    = 7;          // G列から回答記録
 const AGENCY_DEFAULT      = "house";    // 自社フォームの識別コード
 const ADVERTISER_SS_ID    = "1bnERIRl4-VmQ2QP9IwxuPco64huKzNC5qxHfyvCBUVg";
+const ADVERTISER_DATA_START_ROW = 3;    // 広告主シートのデータ開始行
 const QUEST150_MONTH      = "2026/06";
 const QUEST150_SALESPEOPLE = ["岩本拓也", "菅原貴博", "村井亮介"]; // 150件クエスト専用の3名。名簿とは別管理
 // 営業名簿（単一の変更点）。メンバー増減はここ→メニュー「営業担当を同期」

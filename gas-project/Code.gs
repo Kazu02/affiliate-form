@@ -9,6 +9,9 @@ const ANSWER_START_COL    = 7; // G列から回答を記録
 const MANAGEMENT_SHEET    = "管理"; // 管理シート名
 const LINE_PUSH_API       = "https://api.line.me/v2/bot/message/push";
 const ADVERTISER_SS_ID    = "1bnERIRl4-VmQ2QP9IwxuPco64huKzNC5qxHfyvCBUVg";
+const ADVERTISER_DATA_START_ROW = 3; // 行1=タイトル / 行2=ヘッダー / 行3以降=データ
+// 広告主シート保守ルート（doGet の adv_admin）のキー。月指定の再生成と件数確認だけを許可する
+const ADVERTISER_ADMIN_KEY = "766f14bc6fabb20d0a2100c569c9a54bbd62cc321245ff9d";
 
 // 代理店関連
 const AGENCY_KEY          = "代理店コード";
@@ -111,6 +114,10 @@ function doGet(e) {
     // 緊急クエスト管理ルート（期間限定・キー保護。クエスト終了後に削除可）
     if (e && e.parameter && e.parameter.quest_admin === EMERGENCY_ADMIN_KEY) {
       return handleEmergencyAdmin_(e.parameter.action || "status", e.parameter.quest || "emergency");
+    }
+    // 広告主成果管理シートの保守ルート（キー保護。月指定の再生成と件数確認のみ）
+    if (e && e.parameter && e.parameter.adv_admin === ADVERTISER_ADMIN_KEY) {
+      return handleAdvertiserAdmin_(e.parameter.action || "preview", e.parameter.months || "");
     }
 const ss       = getOrCreateSpreadsheet();
     const formName = (e && e.parameter && e.parameter.form) ? e.parameter.form : getFirstFormCode(ss);
@@ -485,6 +492,7 @@ function onOpen() {
     .addItem("顧客管理の案件列を同期",         "syncCustomerManagementCases")
     .addItem("既存データを顧客管理シートへインポート", "importExistingToCustomerSheet")
     .addItem("既存データを広告主シートへインポート",   "importExistingToAdvertiserSheet")
+    .addItem("広告主シートを月指定で再生成",           "importAdvertiserMonths")
     .addSeparator()
     .addItem("担当別ステータス表の案件列を同期（SS2）", "syncRepStatusCaseColumns")
     .addItem("担当別ステータス表を再生成（SS2）",       "buildSalesRepStatusSheets")
@@ -3154,16 +3162,59 @@ function importExistingToAdvertiserSheet() {
   );
 }
 
-function importExistingToAdvertiserSheetCore_() {
-  const advertiserSS = SpreadsheetApp.openById(ADVERTISER_SS_ID);
-  const mainSS       = getOrCreateSpreadsheet();
+// ---- 月を指定して広告主成果管理シートを再生成（メニュー用）----
+// 指定しなかった月のシートには一切触れないので、提出済みの過去月を巻き込まない。
+function importAdvertiserMonths() {
+  const ui  = SpreadsheetApp.getUi();
+  const res = ui.prompt(
+    "広告主シートを月指定で再生成",
+    "対象月をYYYYMM形式でカンマ区切り入力（例: 202607,202608）\n" +
+    "指定した月だけを作り直します。該当データが0件の月は空シートを用意します。",
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (res.getSelectedButton() !== ui.Button.OK) return;
 
-  const buffer = {}; // yyyymm → [[receivedAt, name, referrer, ssUrl], ...]
-  let skipCount = 0;
-  let approvedCount = 0;
-  let trackingMissingCount = 0;
-  let ignoredApprovalCount = 0;
-  const monthCounts = {};
+  let result;
+  try {
+    result = importAdvertiserMonthsCore_(res.getResponseText());
+  } catch (err) {
+    ui.alert("エラー: " + err);
+    return;
+  }
+  const lines = result.months.map(m => {
+    const c = result.monthCounts[m];
+    return "  " + m + ": " + c.rows + "件（承認 " + c.approved +
+           " / トラッキング漏れ " + c.trackingMissing + "）";
+  });
+  ui.alert(
+    "再生成しました\n" + lines.join("\n") +
+    (result.created.length ? "\n\n新規作成: " + result.created.join(", ") : "")
+  );
+}
+
+// ---- "202607,202608" や ["2026/07"] を昇順・重複なしのYYYYMM配列へ正規化 ----
+function normalizeAdvertiserMonths_(months) {
+  const list = Array.isArray(months) ? months : String(months || "").split(",");
+  const seen = {};
+  const out  = [];
+  list.forEach(m => {
+    const v = String(m || "").replace(/[^\d]/g, "");
+    if (!/^\d{6}$/.test(v)) return;
+    const mm = Number(v.substring(4, 6));
+    if (mm < 1 || mm > 12) return;
+    if (seen[v]) return;
+    seen[v] = true;
+    out.push(v);
+  });
+  return out.sort();
+}
+
+// ---- メインSSの自社フォーム回答を月別(YYYYMM)に集める ----
+// 全月インポートと月指定インポートで共有する収集処理。広告主シートには触れない。
+function collectAdvertiserRowsByMonth_() {
+  const mainSS = getOrCreateSpreadsheet();
+  const buffer = {}; // yyyymm → [[受信日時, 広告名, お名前, 紹介者名, スクショURL, トラッキング漏れ, 承認], ...]
+  const stats  = {}; // yyyymm → { approved, trackingMissing, ignored }
 
   mainSS.getSheets().forEach(sheet => {
     if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
@@ -3201,13 +3252,16 @@ function importExistingToAdvertiserSheetCore_() {
         const dateStr = toJSTDateStr(row[rtIdx]);
         if (!dateStr) return;
         const yyyymm = dateStr.substring(0, 7).replace("/", ""); // "2026/05" → "202605"
-        if (!buffer[yyyymm]) buffer[yyyymm] = [];
+        if (!buffer[yyyymm]) {
+          buffer[yyyymm] = [];
+          stats[yyyymm]  = { approved: 0, trackingMissing: 0, ignored: 0 };
+        }
         const approvalFlags = shoninIdx >= 0
           ? getAdvertiserApprovalFlags(row[shoninIdx])
           : { approved: false, trackingMissing: false };
-        if (approvalFlags.approved) approvedCount++;
-        else if (approvalFlags.trackingMissing) trackingMissingCount++;
-        else ignoredApprovalCount++;
+        if (approvalFlags.approved) stats[yyyymm].approved++;
+        else if (approvalFlags.trackingMissing) stats[yyyymm].trackingMissing++;
+        else stats[yyyymm].ignored++;
         buffer[yyyymm].push([
           String(row[rtIdx]                      || ""),
           formDisplayName,
@@ -3220,30 +3274,60 @@ function importExistingToAdvertiserSheetCore_() {
       });
   });
 
+  return { buffer: buffer, stats: stats };
+}
+
+// ---- 1か月分を広告主シートへ書き戻す（行3以降を消してから書き直す）----
+// シートが無ければ作る。rows が空でもシートだけは用意する。
+function writeAdvertiserMonthSheet_(advertiserSS, yyyymm, rows) {
+  let sheet   = advertiserSS.getSheetByName(yyyymm);
+  let created = false;
+  if (!sheet) {
+    sheet   = createAdvertiserMonthSheet(advertiserSS, yyyymm);
+    created = true;
+  }
+  if (!sheet) return { written: 0, created: false, skipped: true };
+
+  // 既存データ行をクリア（1行目タイトル・2行目ヘッダーは保持し3行目から消去）
+  const clearLastRow = sheet.getLastRow();
+  const clearLastCol = Math.max(sheet.getLastColumn(), 7);
+  if (clearLastRow >= ADVERTISER_DATA_START_ROW) {
+    sheet.getRange(ADVERTISER_DATA_START_ROW, 1,
+                   clearLastRow - ADVERTISER_DATA_START_ROW + 1, clearLastCol).clearContent();
+  }
+  if (rows.length) {
+    // 直前に行3以降を消しているので開始行は常に3で確定（クリア直後の getLastRow は当てにしない）
+    sheet.getRange(ADVERTISER_DATA_START_ROW, 1, rows.length, 5).setValues(rows.map(r => r.slice(0, 5)));
+    sheet.getRange(ADVERTISER_DATA_START_ROW, 6, rows.length, 2).setValues(rows.map(r => [r[5], r[6]]));
+  }
+  return { written: rows.length, created: created, skipped: false };
+}
+
+function importExistingToAdvertiserSheetCore_() {
+  const advertiserSS = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+  const collected    = collectAdvertiserRowsByMonth_();
+
   let importCount = 0;
-  Object.keys(buffer).sort().forEach(yyyymm => {
-    let targetSheet = advertiserSS.getSheetByName(yyyymm);
-    if (!targetSheet) {
-      targetSheet = createAdvertiserMonthSheet(advertiserSS, yyyymm);
-    }
-    if (!targetSheet) {
-      skipCount += buffer[yyyymm].length;
-      Logger.log("広告主シート「" + yyyymm + "」なし → " + buffer[yyyymm].length + "件スキップ");
+  let skipCount = 0;
+  let approvedCount = 0;
+  let trackingMissingCount = 0;
+  let ignoredApprovalCount = 0;
+  const monthCounts = {};
+
+  Object.keys(collected.buffer).sort().forEach(yyyymm => {
+    const rows = collected.buffer[yyyymm];
+    const s    = collected.stats[yyyymm];
+    const res  = writeAdvertiserMonthSheet_(advertiserSS, yyyymm, rows);
+    if (res.skipped) {
+      skipCount += rows.length;
+      Logger.log("広告主シート「" + yyyymm + "」なし → " + rows.length + "件スキップ");
       return;
     }
-    // 既存データ行をクリア（1行目タイトル・2行目ヘッダーは保持し3行目から消去）
-    const clearLastRow = targetSheet.getLastRow();
-    const clearLastCol = Math.max(targetSheet.getLastColumn(), 7);
-    if (clearLastRow > 2) {
-      targetSheet.getRange(3, 1, clearLastRow - 2, clearLastCol).clearContent();
-    }
-
-    const rows = buffer[yyyymm];
-    monthCounts[yyyymm] = rows.length;
-    const startRow = getAdvertiserNextRow(targetSheet); // ヘッダー(2行目)の次=3行目
-    targetSheet.getRange(startRow, 1, rows.length, 5).setValues(rows.map(r => r.slice(0, 5)));
-    targetSheet.getRange(startRow, 6, rows.length, 2).setValues(rows.map(r => [r[5], r[6]]));
-    importCount += rows.length;
+    monthCounts[yyyymm]   = rows.length;
+    importCount          += rows.length;
+    approvedCount        += s.approved;
+    trackingMissingCount += s.trackingMissing;
+    ignoredApprovalCount += s.ignored;
     Logger.log("広告主シート「" + yyyymm + "」に " + rows.length + "件追記");
   });
 
@@ -3257,6 +3341,138 @@ function importExistingToAdvertiserSheetCore_() {
   };
 }
 
+// ---- 月を指定して広告主成果管理シートを再生成 ----
+// months は "202607,202608" でも ["202607","202608"] でも可。
+// 指定月のシートが無ければ作り、該当データが0件でも空シートとして用意する
+// （writeToAdvertiserSheet はシートが無い月の成果を捨てるため、月初までに存在させる）。
+function importAdvertiserMonthsCore_(months) {
+  const targets = normalizeAdvertiserMonths_(months);
+  if (!targets.length) throw new Error("対象月をYYYYMM形式で指定してください（例: 202607,202608）");
+
+  const advertiserSS = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+  const collected    = collectAdvertiserRowsByMonth_();
+
+  const monthCounts = {};
+  const created     = [];
+  let importCount = 0;
+  let approvedCount = 0;
+  let trackingMissingCount = 0;
+
+  targets.forEach(yyyymm => {
+    const rows = collected.buffer[yyyymm] || [];
+    const s    = collected.stats[yyyymm]  || { approved: 0, trackingMissing: 0, ignored: 0 };
+    const res  = writeAdvertiserMonthSheet_(advertiserSS, yyyymm, rows);
+    if (res.skipped) throw new Error("広告主シート「" + yyyymm + "」を作成できませんでした");
+    if (res.created) created.push(yyyymm);
+
+    monthCounts[yyyymm] = {
+      rows: rows.length,
+      approved: s.approved,
+      trackingMissing: s.trackingMissing,
+      ignored: s.ignored
+    };
+    importCount          += rows.length;
+    approvedCount        += s.approved;
+    trackingMissingCount += s.trackingMissing;
+    Logger.log("広告主シート「" + yyyymm + "」を再生成: " + rows.length + "件" +
+               (res.created ? "（新規作成）" : ""));
+  });
+
+  return {
+    months: targets,
+    created: created,
+    importCount: importCount,
+    approvedCount: approvedCount,
+    trackingMissingCount: trackingMissingCount,
+    monthCounts: monthCounts
+  };
+}
+
+// ---- 書き込まずに件数と現状だけ返す（再生成の事前確認用）----
+function previewAdvertiserMonths_(months) {
+  const targets      = normalizeAdvertiserMonths_(months);
+  const advertiserSS = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+  const collected    = collectAdvertiserRowsByMonth_();
+
+  const monthCounts = {};
+  targets.forEach(yyyymm => {
+    const rows  = collected.buffer[yyyymm] || [];
+    const s     = collected.stats[yyyymm]  || { approved: 0, trackingMissing: 0, ignored: 0 };
+    const sheet = advertiserSS.getSheetByName(yyyymm);
+    monthCounts[yyyymm] = {
+      rows: rows.length,
+      approved: s.approved,
+      trackingMissing: s.trackingMissing,
+      sheetExists: !!sheet,
+      currentRows: sheet ? Math.max(0, sheet.getLastRow() - (ADVERTISER_DATA_START_ROW - 1)) : 0
+    };
+  });
+
+  return {
+    months: targets,
+    monthCounts: monthCounts,
+    monthsInMainSS: Object.keys(collected.buffer).sort(),
+    advertiserSheets: advertiserSS.getSheets()
+      .map(sh => sh.getName()).filter(n => /^\d{6}$/.test(n))
+  };
+}
+
+// ---- 当月と翌月の広告主シートを先回りして用意する ----
+// writeToAdvertiserSheet はシートが無い月の成果を黙って捨てるため、月が変わる前に作っておく。
+// （2026年7月は 202607 が無いまま月が進み、リアルタイム書き込みが1か月分丸ごと落ちた）
+function ensureAdvertiserMonthSheets() {
+  const ss  = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+  const jst = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+  const p   = n => String(n).padStart(2, "0");
+
+  const created = [];
+  for (let i = 0; i <= 1; i++) { // 当月・翌月
+    const d    = new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth() + i, 1));
+    const name = d.getUTCFullYear() + p(d.getUTCMonth() + 1);
+    if (ss.getSheetByName(name)) continue;
+    createAdvertiserMonthSheet(ss, name);
+    created.push(name);
+  }
+  if (created.length) Logger.log("広告主シートを先回り作成: " + created.join(", "));
+  return created;
+}
+
+// ---- 上記を毎月25日に走らせるトリガーを登録（重複登録しない）----
+// 25日にしているのは、月初0時の書き込みとシート作成が競合しないよう余裕を持たせるため。
+function ensureAdvertiserMonthTrigger() {
+  const existing = ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === "ensureAdvertiserMonthSheets");
+  if (existing.length) return { created: false, triggers: existing.length };
+  ScriptApp.newTrigger("ensureAdvertiserMonthSheets")
+    .timeBased().onMonthDay(25).atHour(3).create();
+  return { created: true, triggers: 1 };
+}
+
+// ---- 広告主シート保守ルート（doGet から adv_admin キー付きで呼ばれる）----
+// action=preview … 書き込まずに件数と現状を返す / action=rebuild … 月指定で再生成
+// action=ensuremonths … 当月・翌月シートを用意し、月次トリガーを登録する
+function handleAdvertiserAdmin_(action, months) {
+  const out = { action: action, months: months };
+  try {
+    if (action === "preview") {
+      out.result = previewAdvertiserMonths_(months);
+    } else if (action === "rebuild") {
+      out.result = importAdvertiserMonthsCore_(months);
+    } else if (action === "ensuremonths") {
+      out.result = {
+        created: ensureAdvertiserMonthSheets(),
+        trigger: ensureAdvertiserMonthTrigger()
+      };
+    } else {
+      out.error = "unknown action";
+    }
+  } catch (e) {
+    out.error = String(e);
+  }
+  return ContentService.createTextOutput(JSON.stringify(out))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 // ---- 広告主シートに月別シートを新規作成（既存シートをテンプレートにコピー）----
 function createAdvertiserMonthSheet(advertiserSS, yyyymm) {
   const monthSheets = advertiserSS.getSheets()
@@ -3265,7 +3481,8 @@ function createAdvertiserMonthSheet(advertiserSS, yyyymm) {
 
   let newSheet;
   if (monthSheets.length > 0) {
-    const template = monthSheets[0]; // 最古のシートを書式テンプレートに使用
+    // 最新の月シートを書式テンプレートに使う（列構成を変えた場合、新しい月にも引き継がれる）
+    const template = monthSheets[monthSheets.length - 1];
     newSheet = template.copyTo(advertiserSS);
     newSheet.setName(yyyymm);
     const lastRow = newSheet.getLastRow();
@@ -3331,7 +3548,15 @@ function writeToAdvertiserSheet(receivedAt, formDisplayName, customerName, refer
   const p    = n => String(n).padStart(2, "0");
   const sheetName = jst.getUTCFullYear() + p(jst.getUTCMonth() + 1);
 
-  const sheet = ss.getSheetByName(sheetName);
+  // 月初にシートが無いと、その月の成果が丸ごと記録されないまま流れてしまうので自動で作る
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    try {
+      sheet = createAdvertiserMonthSheet(ss, sheetName);
+    } catch (e) {
+      Logger.log("広告主シート「" + sheetName + "」の自動作成に失敗: " + e);
+    }
+  }
   if (!sheet) {
     Logger.log("広告主シート「" + sheetName + "」が見つかりません。スキップします。");
     return;
