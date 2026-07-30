@@ -120,6 +120,61 @@ function namesMatch(a, b) {
   return false;
 }
 
+// 氏名の先頭2文字を姓として扱う（日本語氏名の大半に当てはまる近似）。
+// 3文字以下の氏名は姓の切り出しが不安定なので対象外にする（空文字を返す）。
+function surnameOf_(name) {
+  var s = normalizeName(name);
+  return s.length >= 4 ? s.substring(0, 2) : "";
+}
+
+// 弱一致: 姓が同じ かつ 営業担当が紹介営業担当と一致 かつ 候補がちょうど1件 のときだけ行を返す。
+// 申込時と振込先フォームで下の名前の表記が違う（旧姓・通称・世帯主名）ケースを救うための最後の手段。
+// 別人の行へ振込先を書くと誤送金になるため、候補が0件でも2件以上でも必ず -1 を返す。
+function findSurnameMatchRow_(sheet, fullName, referrer) {
+  if (!referrer) return -1;
+  var surname = surnameOf_(fullName);
+  if (!surname) return -1;
+  var lastCol = sheet.getLastColumn(), lastRow = sheet.getLastRow();
+  if (lastRow < 2 || lastCol < 1) return -1;
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+  var nameCol = findNameCol_(headers);
+  var refCol = findHeaderIndex_(headers, REFERRER_HEADER_CANDIDATES);
+  if (nameCol < 0 || refCol < 0) return -1;
+  var width = Math.max(nameCol, refCol) + 1;
+  var data = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  var hits = [];
+  for (var r = 0; r < data.length; r++) {
+    var nm = String(data[r][nameCol] || "").trim();
+    if (!nm) continue;
+    if (surnameOf_(nm) !== surname) continue;
+    if (!namesMatch(data[r][refCol], referrer)) continue;
+    hits.push(r + 2);
+  }
+  return hits.length === 1 ? hits[0] : -1;
+}
+
+// 未照合時のヒント用: 同姓の顧客名を集める（担当は問わない）。
+function surnameCandidates_(sheet, fullName) {
+  var surname = surnameOf_(fullName);
+  if (!surname) return [];
+  var lastCol = sheet.getLastColumn(), lastRow = sheet.getLastRow();
+  if (lastRow < 2 || lastCol < 1) return [];
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+  var nameCol = findNameCol_(headers);
+  var refCol = findHeaderIndex_(headers, REFERRER_HEADER_CANDIDATES);
+  if (nameCol < 0) return [];
+  var width = Math.max(nameCol, refCol) + 1;
+  var data = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  var out = [];
+  for (var r = 0; r < data.length; r++) {
+    var nm = String(data[r][nameCol] || "").trim();
+    if (!nm || surnameOf_(nm) !== surname) continue;
+    var rf = refCol >= 0 ? String(data[r][refCol] || "").trim() : "";
+    out.push(rf ? nm + "(" + rf + ")" : nm);
+  }
+  return out;
+}
+
 // ===== SS1 構造ヘルパー =====
 // SS1 の営業担当シート一覧（タブ名が営業担当名を含むもの）
 function getSalespersonSheets_() {
@@ -473,7 +528,10 @@ function onSubmit(e) {
 
     var result = writePayoutAll_(fullName, referrer, payout);
     if (!result.wrote.length) {
-      logUnmatched_(fullName, referrer, payout, result.reason);
+      logUnmatched_(fullName, referrer, payout, result.reason + candidateHint_(fullName));
+    } else if (result.weak && result.weak.length) {
+      // 姓と担当だけの一致で書き込んだ場合は、誤送金を防ぐため必ず人の確認を残す。
+      logUnmatched_(fullName, referrer, payout, "要確認: 姓と担当のみ一致で書込 " + result.weak.join(" , "));
     }
     Logger.log("onSubmit: name=" + fullName + " ref=" + referrer + " -> " + JSON.stringify(result));
   } catch (err) {
@@ -485,42 +543,66 @@ function onSubmit(e) {
 // マスター(統合顧客管理)と該当営業担当タブ(総合_<担当>)の両方に振込先を書き込む。
 // 総合_ タブは統合顧客管理から再生成されるため、マスターにも書くことで消失を防ぐ。
 function writePayoutAll_(fullName, referrer, payout) {
-  if (!fullName) return { wrote: [], reason: "氏名未入力" };
+  if (!fullName) return { wrote: [], reason: "氏名未入力", weak: [] };
   var ss = SpreadsheetApp.openById(SS1_ID);
   var wrote = [];
+  var weak = [];
 
   // 1) マスター（統合顧客管理）: 名前一致。同名複数なら 営業担当==紹介者 で絞り込む。
+  //    厳密照合で見つからなければ「姓＋担当が一致し候補1件だけ」の弱一致にフォールバック。
   var master = ss.getSheetByName(MASTER_SHEET);
   if (master) {
     var mrow = findMatchRow_(master, fullName, referrer);
+    var mweak = false;
+    if (mrow <= 0) {
+      mrow = findSurnameMatchRow_(master, fullName, referrer);
+      mweak = mrow > 0;
+    }
     if (mrow > 0) {
       var mcol = ensurePayoutColumns_(master);
       if (mcol > 0) {
         writePayoutRow_(master, mrow, mcol, payout);
-        wrote.push({ sheet: master.getName(), row: mrow, startCol: mcol });
+        wrote.push({ sheet: master.getName(), row: mrow, startCol: mcol, weak: mweak });
+        if (mweak) weak.push(master.getName() + "#" + mrow + "→" + nameAt_(master, mrow));
       }
     }
   }
 
   // 2) 営業担当タブ: 紹介者のタブを優先し、無ければ全担当タブを探索（先頭一致1件）。
+  //    全タブを厳密照合してから弱一致に落とす（弱一致が厳密一致を追い越さないように）。
   var ordered = [];
   var refSheet = referrer ? getSheetForReferrer_(referrer) : null;
   if (refSheet) ordered.push(refSheet);
   getSalespersonSheets_().forEach(function (sh) {
     if (!refSheet || sh.getName() !== refSheet.getName()) ordered.push(sh);
   });
-  for (var s = 0; s < ordered.length; s++) {
-    var sheet = ordered[s];
-    var row = findMatchRow_(sheet, fullName, null);
-    if (row <= 0) continue;
-    var col = ensurePayoutColumns_(sheet);
-    if (col <= 0) continue;
-    writePayoutRow_(sheet, row, col, payout);
-    wrote.push({ sheet: sheet.getName(), row: row, startCol: col });
-    break;
+  var hit = null;
+  for (var s = 0; s < ordered.length && !hit; s++) {
+    var row = findMatchRow_(ordered[s], fullName, null);
+    if (row > 0) hit = { sheet: ordered[s], row: row, weak: false };
+  }
+  for (var s2 = 0; s2 < ordered.length && !hit; s2++) {
+    var wrow = findSurnameMatchRow_(ordered[s2], fullName, referrer);
+    if (wrow > 0) hit = { sheet: ordered[s2], row: wrow, weak: true };
+  }
+  if (hit) {
+    var col = ensurePayoutColumns_(hit.sheet);
+    if (col > 0) {
+      writePayoutRow_(hit.sheet, hit.row, col, payout);
+      wrote.push({ sheet: hit.sheet.getName(), row: hit.row, startCol: col, weak: hit.weak });
+      if (hit.weak) weak.push(hit.sheet.getName() + "#" + hit.row + "→" + nameAt_(hit.sheet, hit.row));
+    }
   }
 
-  return { wrote: wrote, reason: wrote.length ? "" : "顧客名の照合先が見つかりません" };
+  return { wrote: wrote, reason: wrote.length ? "" : "顧客名の照合先が見つかりません", weak: weak };
+}
+
+// 指定行の顧客名（弱一致の書き込み先を記録するため）
+function nameAt_(sheet, row) {
+  var lastCol = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+  var nameCol = findNameCol_(headers);
+  return nameCol < 0 ? "" : String(sheet.getRange(row, nameCol + 1).getValue() || "").trim();
 }
 
 // 振込先6セルを書き込む。口座番号・店番の先頭ゼロ落ちを防ぐため、書き込み前にテキスト書式("@")にする。
@@ -559,6 +641,56 @@ function findMatchRow_(sheet, fullName, preferReferrer) {
     }
   }
   return candidates[0] + 2;
+}
+
+// 未照合ログに載せる候補ヒント（同姓の顧客名）。人が直せるようにするため。
+function candidateHint_(fullName) {
+  try {
+    var ss = SpreadsheetApp.openById(SS1_ID);
+    var master = ss.getSheetByName(MASTER_SHEET);
+    if (!master) return "";
+    var c = surnameCandidates_(master, fullName);
+    return c.length ? "（同姓候補: " + c.slice(0, 5).join(" / ") + "）" : "";
+  } catch (e) { return ""; }
+}
+
+// ===== 未照合の再照合（保守用・エディタから実行） =====
+// 「振込先_未照合ログ」の未解決行を上から順に再投入する。照合ロジックの改善後や、
+// 顧客行を追加・改名した後にこれを1回実行すれば、取りこぼした回答が顧客行へ入る。
+// 解決した行は理由列を「解決済」に書き換えるので、何度実行しても二重処理にならない。
+function retryUnmatchedPayouts() {
+  var ss = SpreadsheetApp.openById(SS1_ID);
+  var sh = ss.getSheetByName(PROP_UNMATCHED_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { retried: 0, resolved: 0, detail: [] };
+  var n = sh.getLastRow() - 1;
+  var vals = sh.getRange(2, 1, n, 9).getDisplayValues();
+  var detail = [], retried = 0, resolved = 0;
+  for (var i = 0; i < n; i++) {
+    var row = vals[i];
+    var reason = String(row[8] || "");
+    if (reason.indexOf("解決済") === 0 || reason.indexOf("要確認") === 0) continue; // 済み・確認待ちは触らない
+    var fullName = String(row[1] || "").trim();
+    if (!fullName) continue;
+    var referrer = String(row[2] || "").trim();
+    // 登録日時は元の受信日時を保つ（再照合した日ではなく顧客が登録した日を残す）
+    var payout = [row[3], row[4], row[5], row[6], row[7], String(row[0] || "")];
+    retried++;
+    var res = writePayoutAll_(fullName, referrer, payout);
+    if (res.wrote.length) {
+      resolved++;
+      var dest = res.wrote.map(function (w) { return w.sheet + "#" + w.row; }).join(", ");
+      var note = (res.weak && res.weak.length)
+        ? "解決済(要確認: 姓と担当のみ一致) " + res.weak.join(" , ")
+        : "解決済 " + dest;
+      sh.getRange(i + 2, 9).setValue(note + " / " + formatTimestamp_(new Date()));
+      detail.push(fullName + " -> " + dest);
+    } else {
+      detail.push(fullName + " -> 未解決" + candidateHint_(fullName));
+    }
+  }
+  var out = { retried: retried, resolved: resolved, detail: detail };
+  Logger.log("retryUnmatchedPayouts: " + JSON.stringify(out));
+  return out;
 }
 
 function logUnmatched_(fullName, referrer, payout, reason) {
