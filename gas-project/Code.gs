@@ -136,11 +136,26 @@ const ss       = getOrCreateSpreadsheet();
 
 // ---- POST: フォーム回答を受信・保存 / LINE Webhook ----
 function doPost(e) {
+  let bridgeIdempotencyKey = '';
   try {
-    const data = JSON.parse(e.postData.contents);
+    const rawBody = e && e.postData ? e.postData.contents : '';
+    let data = JSON.parse(rawBody);
+    const bridge = _verifyCustomerLineBridgeRequest(e, rawBody, data);
+    if (bridge.present) {
+      if (!bridge.accepted) return _customerLineBridgeResponse(false, bridge.code);
+      if (bridge.test) return _customerLineBridgeResponse(true, 'bridge_test');
+      if (bridge.duplicate) return _customerLineBridgeResponse(true, 'duplicate');
+      bridgeIdempotencyKey = bridge.idempotencyKey;
+      handleLineWebhook({ events: [bridge.event] });
+      _customerLineBridgeFinishEvent(bridgeIdempotencyKey, true);
+      return _customerLineBridgeResponse(true, 'delivered');
+    }
 
     // LINE Webhook イベント（eventsプロパティ存在で判定）
     if (data.events !== undefined) {
+      if (!_customerLineDirectWebhookEnabled()) {
+        return _customerLineBridgeResponse(false, 'direct_webhook_disabled');
+      }
       return handleLineWebhook(data);
     }
 
@@ -223,6 +238,13 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
+    if (bridgeIdempotencyKey) {
+      try {
+        _customerLineBridgeFinishEvent(bridgeIdempotencyKey, false);
+      } catch (finishError) {
+        console.error('bridge rollback error:', finishError);
+      }
+    }
     Logger.log(err);
     return ContentService
       .createTextOutput(JSON.stringify({ result: "error", message: err.toString() }))
