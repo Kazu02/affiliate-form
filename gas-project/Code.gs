@@ -10,8 +10,15 @@ const MANAGEMENT_SHEET    = "管理"; // 管理シート名
 const LINE_PUSH_API       = "https://api.line.me/v2/bot/message/push";
 const ADVERTISER_SS_ID    = "1bnERIRl4-VmQ2QP9IwxuPco64huKzNC5qxHfyvCBUVg";
 const ADVERTISER_DATA_START_ROW = 3; // 行1=タイトル / 行2=ヘッダー / 行3以降=データ
-// 広告主シート保守ルート（doGet の adv_admin）のキー。月指定の再生成と件数確認だけを許可する
-const ADVERTISER_ADMIN_KEY = "766f14bc6fabb20d0a2100c569c9a54bbd62cc321245ff9d";
+// 広告主シート保守ルート（doGet の adv_admin）のキー。月指定の再生成と件数確認だけを許可する。
+// このリポジトリは GitHub Pages の配信元のため public。キーをソースに書くと
+// 誰でも読めてしまうので、値は ScriptProperties に置く。
+// 未設定のあいだはルートを一切通さない（fail-closed）。
+const ADVERTISER_ADMIN_KEY_PROPERTY = "ADVERTISER_ADMIN_KEY";
+
+function advertiserAdminKey_() {
+  return PropertiesService.getScriptProperties().getProperty(ADVERTISER_ADMIN_KEY_PROPERTY) || "";
+}
 
 // 代理店関連
 const AGENCY_KEY          = "代理店コード";
@@ -66,7 +73,8 @@ const EMERGENCY_TARGET_OTHERS  = 40;
 const EMERGENCY_IWAMOTO  = "岩本拓也";
 const EMERGENCY_END_STR  = "2026/07/31";
 const EMERGENCY_START_AT = "2026/07/27 10:00:00"; // この日時(JST)以降の受信のみカウント（過去分は含めない）
-const EMERGENCY_ADMIN_KEY = "24fc664ad29245569528ca0ed6fd2d06c602b377d9034e96";
+// EMERGENCY_ADMIN_KEY（quest_admin ルート用）はクエスト終了(2026/07/31)に伴い撤去した。
+// 値は public リポジトリに露出していたため、再開する場合も同じ値は使わない。
 
 // 特別緊急クエスト設定（2026/07/27〜07/31・毎日13時/20時にLINE報告）
 // ノムコム1案件を 全体30件（岩本15/菅原10/江口3/藤井2）で追いかける
@@ -111,12 +119,11 @@ function getConfigSheetByCode(ss, formCode) {
 // ---- GET: フォーム設定を返す ----
 function doGet(e) {
   try {
-    // 緊急クエスト管理ルート（期間限定・キー保護。クエスト終了後に削除可）
-    if (e && e.parameter && e.parameter.quest_admin === EMERGENCY_ADMIN_KEY) {
-      return handleEmergencyAdmin_(e.parameter.action || "status", e.parameter.quest || "emergency");
-    }
-    // 広告主成果管理シートの保守ルート（キー保護。月指定の再生成と件数確認のみ）
-    if (e && e.parameter && e.parameter.adv_admin === ADVERTISER_ADMIN_KEY) {
+    // 緊急クエスト管理ルート（quest_admin）はクエスト終了(2026/07/31)に伴い撤去した。
+    // 広告主成果管理シートの保守ルート（キー保護。月指定の再生成と件数確認のみ）。
+    // キーは ScriptProperties から読む。未設定なら誰も通さない。
+    const advAdminKey = advertiserAdminKey_();
+    if (advAdminKey && e && e.parameter && e.parameter.adv_admin === advAdminKey) {
       return handleAdvertiserAdmin_(e.parameter.action || "preview", e.parameter.months || "",
                                     e.parameter.backup === "1");
     }
