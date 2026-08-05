@@ -3130,55 +3130,9 @@ function removeSpecialQuestTriggers_() {
     .forEach(t => ScriptApp.deleteTrigger(t));
 }
 
-// ---- 管理ルート（doGetから・キー保護） ----
-// quest=special で特別緊急クエスト（ノムコム）側を操作する
-function handleEmergencyAdmin_(action, quest) {
-  const isSpecial = (quest === "special");
-  const out = { action: action, quest: isSpecial ? "special" : "emergency" };
-  try {
-    if (action === "listforms") {
-      const ss = getOrCreateSpreadsheet();
-      out.forms = [];
-      ss.getSheets().forEach(sheet => {
-        if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
-        const vals = sheet.getDataRange().getValues();
-        let agency = AGENCY_DEFAULT, name = "";
-        for (const row of vals) {
-          if (String(row[0]) === AGENCY_KEY  && String(row[1] || "").trim()) agency = String(row[1]).trim();
-          if (String(row[0]) === FORM_NAME_KEY && String(row[1] || "").trim()) name = String(row[1]).trim();
-        }
-        out.forms.push({
-          sheet:  sheet.getName(),
-          code:   getFormCodeFromSheet(sheet),
-          name:   name,
-          agency: agency,
-          rows:   Math.max(0, sheet.getLastRow() - 1)
-        });
-      });
-    } else if (action === "preview") {
-      out.message = isSpecial ? buildSpecialQuestMessage_() : buildEmergencyQuestMessage_();
-    } else if (action === "send") {
-      out.message = isSpecial ? specialQuestReport(true) : emergencyQuestReport(true);
-      out.sent = out.message !== null;
-    } else if (action === "setup") {
-      out.result = isSpecial ? ensureSpecialQuestTriggers() : ensureEmergencyQuestTriggers();
-    } else if (action === "status") {
-      const props   = PropertiesService.getScriptProperties();
-      const handler = isSpecial ? "specialQuestReport" : "emergencyQuestReport";
-      out.lineTokenSet = !!props.getProperty("LINE_CHANNEL_TOKEN");
-      out.lineGroupSet = !!props.getProperty("LINE_GROUP_ID");
-      out.lastSent     = props.getProperty(isSpecial ? "SPECIAL_QUEST_LAST_SENT" : "EMERGENCY_QUEST_LAST_SENT") || null;
-      out.questTriggers = ScriptApp.getProjectTriggers()
-        .filter(t => t.getHandlerFunction() === handler).length;
-    } else {
-      out.error = "unknown action";
-    }
-  } catch (e) {
-    out.error = String(e);
-  }
-  return ContentService.createTextOutput(JSON.stringify(out))
-    .setMimeType(ContentService.MimeType.JSON);
-}
+// ---- 管理ルート（quest_admin）はクエスト終了(2026/07/31)に伴い撤去した ----
+// handleEmergencyAdmin_ も到達不能になったため削除した。再開する場合は
+// キーをソースに書かず ScriptProperties から読むこと（このリポジトリは public）。
 
 // ---- 既存フォーム回答を広告主成果管理シートへ一括インポート ----
 // 月ごとにバッファしてまとめて書き込む。同じシートに重複して実行しないこと。
