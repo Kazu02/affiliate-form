@@ -104,7 +104,7 @@
 - Consequence:
   - `syncCustomerManagementCases()` を新設（メニュー「顧客管理の案件列を同期」）。各営業マンシートのヘッダーと最新案件（`getJishaForms()`）を突き合わせ、不足案件列を書式・幅・入力規則付きで追加。
   - `upsertCustomerRow` を改修し、案件列が無ければ自動追加（`addCaseColumnToSheet_`）してから書き込む。これで以後の新案件はフォーム送信時に自動反映される。
-  - デプロイは shinhogle@gmail.com で `clasp push`→`clasp redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr`。誤アカウント（3s3.cube）でのデプロイは executeAs の都合で本番破壊につながるため厳禁。
+  - デプロイは s***e@gmail.com で `clasp push`→`clasp redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr`。誤アカウント（3s3.cube）でのデプロイは executeAs の都合で本番破壊につながるため厳禁。
 
 ## 2026-06-22: 入力途中保存と紹介者固定リンクを全案件共通にする
 
@@ -274,15 +274,15 @@
   - バージョン 113 / 115 / 117 の `appsscript.json` も全て `ANYONE_ANONYMOUS`。→ マニフェストでもない。
   - `config.js` の URL は本番デプロイID・`webApp.url` と完全一致（72文字）。→ URL の指し違いでもない。
   - リダイレクト連鎖: 正常な @115 は `302 → googleusercontent → 200`。本番 @113 は **リダイレクトすら発生せず即 403**。→ 実行前に弾かれている＝実行ユーザーの承認欠如と整合。
-  - Drive API: script「アフィリエイトフォーム」の **owner = `shinhogle@gmail.com`**、`3s3.cube@gmail.com` は **canEdit=true（編集者）**。編集者でも `clasp push`/`redeploy` は成功してしまうため、誤アカウントでのデプロイが起こりうる状態だった。
+  - Drive API: script「アフィリエイトフォーム」の **owner = `s***e@gmail.com`**、`3***e@gmail.com` は **canEdit=true（編集者）**。編集者でも `clasp push`/`redeploy` は成功してしまうため、誤アカウントでのデプロイが起こりうる状態だった。
   - 本番デプロイの `updateTime` = `2026-08-03T06:58:27Z`（**JST 15:58**）。最終申請 8/3 13:49 の直後で、停止開始と符合する。同日の 3s3cube 認証バックアップ（`.clasprc.backup-3s3cube-20260803-2140.json`）も残っている。
   - 対照: 同じ原因で壊れ**当日修復済み**のフォーム顧客管理は現在 302（正常）、アフィリンク本番のみ 403。
 - **バージョンを戻しても直らない**（403の原因はコードではなく実行ユーザーのため）。`clasp push` でも直らない。
 - 復旧手順（コード変更なし・URL不変・バージョン不変）:
   ```
-  clasp show-authorized-user   # shinhogle@gmail.com を必ず目視
+  clasp show-authorized-user   # s***e@gmail.com を必ず目視
   clasp redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr -V 113 -d "オーナー再デプロイで403復旧"
   ```
   `-V 113` を明示するので、未コミットの customer-line-bridge 系コードは本番に載らない（前回懸念した「公開する版の選択」は発生しない）。
-- 予防: このプロジェクトのデプロイ前に必ず `clasp show-authorized-user` で `shinhogle@gmail.com` を目視する。`automation/scripts/gas-accounts.json` にも `プロジェクト\市場作り\アフィリンク\gas-project = shinhogle` として登録済み。
+- 予防: このプロジェクトのデプロイ前に必ず `clasp show-authorized-user` で `s***e@gmail.com` を目視する。`automation/scripts/gas-accounts.json` にも `プロジェクト\市場作り\アフィリンク\gas-project = shinhogle` として登録済み。
 - 教訓: **同種の誤操作は同じ作業セッション内で複数プロジェクトに波及しうる。** 1件見つけたら、その日に触った他のGAS Web Appも公開URLで疎通確認する。

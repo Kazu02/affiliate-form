@@ -4,7 +4,7 @@
 
 - Project: アフィリンク
 - Organization: 市場作り
-- Workspace path: C:\Users\shinh\OneDrive\デスクトップ\AI\プロジェクト\市場作り\アフィリンク
+- Workspace path: C:\Users\shinh\Desktop\AI\プロジェクト\市場作り\アフィリンク
 
 ## Purpose
 
@@ -12,7 +12,7 @@
 
 ## Users And Stakeholders
 
-- **管理者**: shinhogle@gmail.com（市場作りプロジェクト全般）
+- **管理者**: s***e@gmail.com（市場作りプロジェクト全般）
 - **営業マン（自社）**: 柳沢悠貴, 岩本拓也, 菅原貴博, 村井亮介, 大島雅史, 小椋裕也, 細川貴弘, 藤森宣哉, 江口裕人, 藤井勇大（計10名）
 - **営業名簿の単一の変更点**: `Code.gs` の定数 `JISHA_REFERRER_OPTIONS`（カンマ区切り）。メンバー増減はここを編集し、スプレッドシートのメニュー「フォーム管理 > 営業担当を同期（選択肢＋担当タブ＋データ再生成）」を1回実行するだけ。`syncSalesRoster()` が以下を通しで行う:
   1. 全自社フォームの紹介者選択肢を再適用（`applyReferrerSelectToJishaSheets`）
@@ -82,7 +82,7 @@ clasp deploy -i <Deploy ID>
 
 - `clasp run` は使用不可
 - テスト用: `REDIRECT=$(curl -s -o /dev/null -w "%{redirect_url}" "$URL") && curl -s "$REDIRECT"`
-- GASアカウント: shinhogle@gmail.com（毎回 `clasp logout` → `clasp login` で確認すること）
+- GASアカウント: s***e@gmail.com（毎回 `clasp logout` → `clasp login` で確認すること）
 
 ### フォーム送信時の処理フロー（doPost）
 
@@ -164,7 +164,7 @@ const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮
 
 ## Constraints
 
-- GASアカウントは必ず shinhogle@gmail.com を使うこと（3s3.cube@gmail.com と混同しないよう注意）
+- GASアカウントは必ず s***e@gmail.com を使うこと（3***e@gmail.com と混同しないよう注意）
 - `clasp run` は使用不可。テストはcurl 2ステップで行う
 - 広告主シートのF列はトラッキング漏れ、G列は承認区分。既存データ一括インポート時は承認列の記号を見て、⭕/○系ならG列、❌/✖/×系ならF列をチェックする。△や空欄など他の値は両方false。
 - 広告主シートの行2はヘッダー行。データは行3以降に書き込む
