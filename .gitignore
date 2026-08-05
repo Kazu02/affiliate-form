@@ -3,3 +3,8 @@
 
 # Local clasp account marker (machine-specific)
 .clasp-account
+
+# Orchestrator runtime artifacts (mirrors the workspace root .gitignore)
+AGENT_STATE.json
+AUTOMATION_REQUEST.json
+AUTOMATION_INCIDENT.md

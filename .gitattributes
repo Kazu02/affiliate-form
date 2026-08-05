@@ -1,0 +1,3 @@
+# 協調用Markdown（CLAUDE_REVIEW.md 等）の行末スペースで verificationGate の
+# `git diff --check` が誤失敗するのを防ぐ。コード(*.gs/*.js)のチェックは維持。
+*.md -whitespace
