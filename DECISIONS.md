@@ -268,10 +268,21 @@
 
 - Problem: 本番デプロイ `AKfycbznoqLyw…`(@113) に匿名でGETすると **403「アクセスが拒否されました／ドライブ アクセス権が必要です」**。公開フォーム `https://kazu02.github.io/affiliate-form/` の `config.js` はこのURLを指しているため、一般ユーザーはフォームを開くことも送信することもできない。
 - 裏付け: 広告主シート 202608 のA列（受信日時）の最終行が **2026/08/03 13:49:41**。以降 2日間 0件（8/1 は7件、8/3 は5件届いていた）。
-- 切り分け:
-  - 同一スクリプトの他デプロイは同じ curl で **200** を返す（@112・@115）。クライアント側やIP起因ではない。
-  - バージョン 113 / 115 / 117 の `appsscript.json` を個別に取得して確認したところ、**いずれも `executeAs: USER_DEPLOYING` / `access: ANYONE_ANONYMOUS`**。コード側（マニフェスト）の設定は正しい。
-  - よって原因は**デプロイ個別のアクセス設定がGASのUIで変更されたまま戻っていない**とみられる。マニフェストではなくデプロイ単位の設定が優先されるため、`clasp push` では直らない。
-- 状況証拠: 8/3 に作られたバージョン名が `temporary-direct-webhook-cutover-2026-08-03-affiliate` / `temporary-owner-cutover-2026-08-03-affiliate`。「temporary」「owner-cutover」＝一時的に所有者のみへ絞る作業の痕跡で、**復帰が漏れた**と考えられる。公式LINE運用側の顧客紐付け作業と同日。
-- **単純にアクセス設定だけ戻してはいけない**: 本番は @113（customer-line-bridge 前のコード）のままなので、匿名公開に戻すと `_customerLineDirectWebhookEnabled()` のガードが無い版が公開される。**公開するコードの版とセットで判断する。**
-- 対応はユーザー判断待ち（2026-08-05 時点で未対応）。選択肢は (a) 最新版で本番を再デプロイしアクセスを全員に戻す (b) @113 のままアクセスだけ戻す (c) `config.js` の向き先を生きているデプロイへ変更する、のいずれか。
+- **Cause（確定）: オーナー以外のアカウントで本番デプロイIDを再デプロイし、Web App の実行ユーザーがそちらへ移った。** `executeAs: USER_DEPLOYING` なので、再デプロイした瞬間に実行ユーザーが「最後に redeploy した人」へ移る。そのアカウントは本scriptのOAuthスコープを承認していないため、匿名リクエストが全て403になる。**同日(8/3)に 市場作り/フォーム顧客管理 で発生・診断済みの障害とまったく同じ**（[[../フォーム顧客管理/DECISIONS.md]] 2026-08-03、[[clasp-account-switch]]）。あちらは当日修復されたが、**アフィリンク本番が同じ原因で壊れていたことは気づかれないまま2日間放置された**。
+- 確定に使った証拠:
+  - Apps Script API `projects.deployments.list` で全9デプロイの `entryPointConfig` を取得。**本番(@113)も含め全て `access: ANYONE_ANONYMOUS` / `executeAs: USER_DEPLOYING`**。→ アクセス設定の変更ではない（当初この線を疑ったが**否定された**）。
+  - バージョン 113 / 115 / 117 の `appsscript.json` も全て `ANYONE_ANONYMOUS`。→ マニフェストでもない。
+  - `config.js` の URL は本番デプロイID・`webApp.url` と完全一致（72文字）。→ URL の指し違いでもない。
+  - リダイレクト連鎖: 正常な @115 は `302 → googleusercontent → 200`。本番 @113 は **リダイレクトすら発生せず即 403**。→ 実行前に弾かれている＝実行ユーザーの承認欠如と整合。
+  - Drive API: script「アフィリエイトフォーム」の **owner = `shinhogle@gmail.com`**、`3s3.cube@gmail.com` は **canEdit=true（編集者）**。編集者でも `clasp push`/`redeploy` は成功してしまうため、誤アカウントでのデプロイが起こりうる状態だった。
+  - 本番デプロイの `updateTime` = `2026-08-03T06:58:27Z`（**JST 15:58**）。最終申請 8/3 13:49 の直後で、停止開始と符合する。同日の 3s3cube 認証バックアップ（`.clasprc.backup-3s3cube-20260803-2140.json`）も残っている。
+  - 対照: 同じ原因で壊れ**当日修復済み**のフォーム顧客管理は現在 302（正常）、アフィリンク本番のみ 403。
+- **バージョンを戻しても直らない**（403の原因はコードではなく実行ユーザーのため）。`clasp push` でも直らない。
+- 復旧手順（コード変更なし・URL不変・バージョン不変）:
+  ```
+  clasp show-authorized-user   # shinhogle@gmail.com を必ず目視
+  clasp redeploy AKfycbznoqLywTwLGrictq4dTKkbx5kcfn8g8PF60QpRdjgGaOCqUTuQLlfvE3hiWkYrLBlr -V 113 -d "オーナー再デプロイで403復旧"
+  ```
+  `-V 113` を明示するので、未コミットの customer-line-bridge 系コードは本番に載らない（前回懸念した「公開する版の選択」は発生しない）。
+- 予防: このプロジェクトのデプロイ前に必ず `clasp show-authorized-user` で `shinhogle@gmail.com` を目視する。`automation/scripts/gas-accounts.json` にも `プロジェクト\市場作り\アフィリンク\gas-project = shinhogle` として登録済み。
+- 教訓: **同種の誤操作は同じ作業セッション内で複数プロジェクトに波及しうる。** 1件見つけたら、その日に触った他のGAS Web Appも公開URLで疎通確認する。
