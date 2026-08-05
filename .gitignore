@@ -8,3 +8,9 @@
 AGENT_STATE.json
 AUTOMATION_REQUEST.json
 AUTOMATION_INCIDENT.md
+
+# 協調用ドキュメント（このリポジトリは GitHub Pages 配信元のため public。
+# 内部の実装指示・レビューを公開side へ出さない）
+CODEX_TASK.md
+CODEX_REPORT.md
+CLAUDE_REVIEW.md
