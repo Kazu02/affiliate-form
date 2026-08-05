@@ -286,3 +286,34 @@
   `-V 113` を明示するので、未コミットの customer-line-bridge 系コードは本番に載らない（前回懸念した「公開する版の選択」は発生しない）。
 - 予防: このプロジェクトのデプロイ前に必ず `clasp show-authorized-user` で `s***e@gmail.com` を目視する。`automation/scripts/gas-accounts.json` にも `プロジェクト\市場作り\アフィリンク\gas-project = shinhogle` として登録済み。
 - 教訓: **同種の誤操作は同じ作業セッション内で複数プロジェクトに波及しうる。** 1件見つけたら、その日に触った他のGAS Web Appも公開URLで疎通確認する。
+
+## 2026-08-05: 公開リポジトリに保守ルートのキーが載っていた（未対応・push停止中）
+
+- Problem: このプロジェクトの origin `https://github.com/Kazu02/affiliate-form` は **public**。
+  `gas-project/Code.gs` に定数として書かれている `ADVERTISER_ADMIN_KEY` と
+  `EMERGENCY_ADMIN_KEY` が、**認証なしで誰でも読める**。
+- 確認方法（値は記録しない）: `curl` で `raw.githubusercontent.com` の
+  `master/gas-project/Code.gs` を無認証取得し、両キーの定義行が含まれることを確認した
+  （2026-08-05・170,673バイト取得）。`gh repo view` でも `visibility: PUBLIC`。
+- なぜ public なのか: 公開フォーム `kazu02.github.io/affiliate-form` の GitHub Pages
+  配信元がこのリポジトリだから。Pages のプロジェクトページは public リポジトリを要する。
+  つまり **「フォームを公開する」ことと「GASのソースを公開する」ことが同じリポジトリで
+  結びついてしまっている**のが構造的な原因。
+- 影響: キーが読める状態で、保守ルートを載せた一時デプロイ
+  `AKfycbwn…`(@112) と `AKfycbwwrB9V…`(@115) が**いずれも匿名で200を返す**。
+  この2つが生きている限り、外部から広告主成果管理シートの再生成（上書き）や
+  クエストのLINE送信を実行できる。本番デプロイ(@113)は現在403のため経路になっていない。
+- 露出期間: `adv_admin` を追加したのが 2026-07-30、`quest_admin` は 2026-07-27。
+  少なくともそれ以降 public に置かれている。
+- **このリポジトリへの push は解消まで停止する。** 2026-08-05 のワークスペース整理では
+  他のネストリポジトリ（ラボ会議・RAGNIZE管理画面・shopee・フォーム顧客管理）は push したが、
+  ここだけ意図的に見送った（未push 5コミット）。新規に `CODEX_TASK.md` /
+  `CODEX_REPORT.md` / `CLAUDE_REVIEW.md` を公開側へ足すことになるため。
+- あわせて既に public な情報: `DECISIONS.md` / `PROJECT_CONTEXT.md` / `ROADMAP.md`
+  （スプレッドシートID4種・スクリプトID・デプロイID・営業担当の実名を含む）、
+  `config.js`（本番デプロイURL）、`payout-form/Code.gs`（キー等の直書きは無し）。
+- 対応方針（未実施・要判断）: (1) 保守ルート自体を Code.gs から撤去して両キーを無効化する、
+  (2) 一時デプロイ @112・@115 を削除して経路を閉じる、(3) GASソースとPages配信物を
+  別リポジトリに分け、GAS側を private にする、(4) 既に公開された内部ドキュメントの扱い。
+  履歴に残るため、キーは撤去だけでなく**別の値へ入れ替える**必要がある。
+
