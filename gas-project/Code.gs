@@ -566,6 +566,7 @@ function onOpen() {
   ensureEmergencyQuestTriggers();
   applyReferrerSelectToJishaSheets();
   try { syncCaseMaster(); } catch (e) { Logger.log("案件マスタ同期エラー: " + e); }
+  try { ensureAgencyNotifyTrigger(); } catch (e) { Logger.log("代理店通知トリガー登録エラー: " + e); }
   SpreadsheetApp.getUi().createMenu("フォーム管理")
     .addItem("新規フォーム作成",       "showCreateFormDialog")
     .addItem("管理シートを更新",       "updateManagementSheet")
@@ -576,6 +577,8 @@ function onOpen() {
     .addItem("代理店を登録（リンク集をメール送信）", "showAgencyRegisterPrompt")
     .addItem("代理店を削除",                   "showAgencyDeletePrompt")
     .addItem("全代理店へリンク集を送り直す",   "resendAllAgencyLinks")
+    .addItem("稼働の変更を代理店へ通知",       "notifyAgencyCaseChangesFromMenu")
+    .addItem("稼働変更の日次通知を有効化",     "ensureAgencyNotifyTriggerFromMenu")
     .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
     .addItem("代理店割り当て更新",     "rebuildAllAgencySpreadsheets")
     .addItem("旧共有SSをゴミ箱へ",     "deleteAllOldSharingSpreadsheets")
