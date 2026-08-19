@@ -309,13 +309,19 @@ function agencyLinksUrl_(token) {
 // 代理店1件の「稼働中案件リンク一式」を組み立てる。
 // 稼働中の案件だけを対象にするので、停止した案件のリンクは自動的に消える。
 function buildAgencyLinkList_(agencyCode) {
-  return listActiveCases_().map(function (c) {
-    return {
-      caseCode: c.code,
-      caseName: c.name,
-      url: FORM_BASE_URL + "?form=" + encodeURIComponent(c.code) + "&ag=" + encodeURIComponent(agencyCode)
-    };
-  });
+  // 代理店別取扱案件のチェックで絞る。未設定（列が無い）なら全稼働案件を渡す。
+  let allowed = null;
+  try { allowed = agencyCaseSelection_(agencyCode); } catch (e) { allowed = null; }
+
+  return listActiveCases_()
+    .filter(function (c) { return allowed === null || allowed.indexOf(c.code) >= 0; })
+    .map(function (c) {
+      return {
+        caseCode: c.code,
+        caseName: c.name,
+        url: FORM_BASE_URL + "?form=" + encodeURIComponent(c.code) + "&ag=" + encodeURIComponent(agencyCode)
+      };
+    });
 }
 
 function isValidEmail_(s) {
@@ -385,6 +391,12 @@ function registerAgency_(data, fromForm) {
   // 代理店の顧客も一元管理するため、顧客管理SSに担当者タブを用意する。
   try { ensureAgencyCustomerTab_(agency.person); }
   catch (e) { Logger.log("代理店の顧客管理タブ作成に失敗: " + e); }
+
+  // 代理店別取扱案件に列を用意する（新規は全稼働案件にチェックが入る）。
+  // ここで作っておかないと、リンク集が「未設定＝全案件」で動き続けて
+  // 案件を絞りたくなったときに設定場所が無い、という状態になる。
+  try { syncAgencyCaseMatrix(); }
+  catch (e) { Logger.log("代理店別取扱案件の同期に失敗: " + e); }
 
   const cases = buildAgencyLinkList_(agency.code);
   let mailSent = false, mailError = "";
@@ -563,10 +575,26 @@ function agencyLinksPayload_(token) {
   if (agency.status !== AGENCY_STATUS_ACTIVE) {
     return { error: "このリンクは現在ご利用いただけません。" };
   }
+  // 実績（そのリンクから何人申請したか）を添える。リンク集を一枚ものの管理画面にするため。
+  let counts = {};
+  try { counts = countAgencyApplications_(agency.name); } catch (e) { counts = {}; }
+
+  const cases = buildAgencyLinkList_(agency.code).map(function (c) {
+    return {
+      caseCode: c.caseCode,
+      caseName: c.caseName,
+      url: c.url,
+      count: counts[c.caseCode] || 0
+    };
+  });
+  let total = 0;
+  Object.keys(counts).forEach(function (k) { total += counts[k]; });
+
   return {
     agencyName: agency.name,
     personName: agency.person,
-    cases: buildAgencyLinkList_(agency.code),
+    cases: cases,
+    totalCount: total,
     updatedAt: formatJST(new Date())
   };
 }

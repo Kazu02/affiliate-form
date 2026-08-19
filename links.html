@@ -27,7 +27,25 @@
     background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
     padding: 16px; margin-bottom: 12px;
   }
-  .card .name { font-size: 1rem; font-weight: 700; margin-bottom: 12px; }
+  .card .head-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; margin-bottom: 12px;
+  }
+  .card .name { font-size: 1rem; font-weight: 700; }
+  .count {
+    flex: 0 0 auto; font-size: .78rem; color: #475569;
+    background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px;
+    padding: 3px 10px; white-space: nowrap;
+  }
+  .count strong { font-size: .95rem; color: #4f46e5; }
+
+  .summary {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 16px;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .summary .label { font-size: .85rem; color: #475569; }
+  .summary .value { font-size: 1.5rem; font-weight: 700; color: #4f46e5; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn {
     flex: 1 1 auto; min-width: 130px; text-align: center;
@@ -81,6 +99,11 @@
       ブックマークしてお使いください。
     </div>
 
+    <div class="summary">
+      <div class="label">これまでの申請数（貴社リンク経由）</div>
+      <div class="value" id="totalCount">0</div>
+    </div>
+
     <div id="list"></div>
 
     <div class="foot">
@@ -110,6 +133,8 @@
     document.getElementById("who").textContent =
       [data.agencyName, data.personName ? data.personName + " 様" : ""].filter(Boolean).join(" / ");
     document.getElementById("updatedAt").textContent = data.updatedAt || "";
+    document.getElementById("totalCount").textContent =
+      (typeof data.totalCount === "number" ? data.totalCount : 0) + " 件";
 
     var list = document.getElementById("list");
     list.innerHTML = "";
@@ -124,10 +149,24 @@
         var card = document.createElement("div");
         card.className = "card";
 
+        var headRow = document.createElement("div");
+        headRow.className = "head-row";
+
         var name = document.createElement("div");
         name.className = "name";
         name.textContent = c.caseName;
-        card.appendChild(name);
+        headRow.appendChild(name);
+
+        var count = document.createElement("div");
+        count.className = "count";
+        var n = document.createElement("strong");
+        n.textContent = (typeof c.count === "number" ? c.count : 0);
+        count.appendChild(document.createTextNode("申請 "));
+        count.appendChild(n);
+        count.appendChild(document.createTextNode(" 件"));
+        headRow.appendChild(count);
+
+        card.appendChild(headRow);
 
         var row = document.createElement("div");
         row.className = "row";
