@@ -574,6 +574,7 @@ function onOpen() {
     .addItem("案件マスタを同期＋稼働を反映",   "syncCaseMasterAndApply")
     .addItem("稼働状況をシート表示へ反映",     "applyCaseVisibilityFromMenu")
     .addItem("代理店を登録（リンク集をメール送信）", "showAgencyRegisterPrompt")
+    .addItem("代理店を削除",                   "showAgencyDeletePrompt")
     .addItem("全代理店へリンク集を送り直す",   "resendAllAgencyLinks")
     .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
     .addItem("代理店割り当て更新",     "rebuildAllAgencySpreadsheets")

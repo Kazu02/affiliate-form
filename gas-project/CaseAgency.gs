@@ -685,3 +685,96 @@ function setupCaseAgencyFeatureFromMenu() {
   const msg = setupCaseAgencyFeature();
   SpreadsheetApp.getUi().alert("初回セットアップが完了しました。\n\n" + msg);
 }
+
+// =============================================
+// 代理店の削除
+// =============================================
+
+// 代理店を1件消す。代理店マスタの行だけでなく、登録時に作られた
+// 顧客管理SSの担当者タブも片付ける（データが入っていれば残す）。
+// dryRun=true なら何も消さずに、消す対象だけを返す。
+function deleteAgencyCore_(code, dryRun) {
+  const key = String(code || "").trim();
+  if (!key) throw new Error("代理店コードを指定してください。");
+
+  const agency = findAgencyByCode_(key);
+  if (!agency) throw new Error("代理店コード「" + key + "」は見つかりません。");
+
+  // 顧客管理SSの担当者タブの状態を調べる
+  let tabState = "なし";
+  let tabSheet = null;
+  const css = getCustomerManagementSS();
+  if (css && agency.person) {
+    css.getSheets().forEach(function (sh) {
+      if (normalizeName(sh.getName()) === normalizeName(agency.person)) tabSheet = sh;
+    });
+    if (tabSheet) {
+      // 1行目はヘッダー。2行目以降に値があればデータ有りとみなす。
+      tabState = (tabSheet.getLastRow() <= 1) ? "空なので削除" : "データがあるので残す";
+    }
+  }
+
+  const plan = {
+    code: agency.code, name: agency.name, person: agency.person,
+    email: agency.email, row: agency.row, customerTab: tabState
+  };
+  if (dryRun) return plan;
+
+  // 顧客管理タブ（空のときだけ消す）
+  if (tabSheet && tabSheet.getLastRow() <= 1) {
+    css.deleteSheet(tabSheet);
+  }
+
+  // 代理店マスタの行
+  const sh = getAgencyMasterSheet_();
+  sh.deleteRow(agency.row);
+  SpreadsheetApp.flush();
+
+  // 消えたことを確認する（フィルタが掛かっていると deleteRow は無言で失敗する）
+  if (findAgencyByCode_(key)) {
+    throw new Error("行の削除に失敗しました。代理店マスタにフィルタが掛かっていないか確認してください。");
+  }
+  return plan;
+}
+
+function showAgencyDeletePrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const a = ui.prompt("代理店の削除", "削除する代理店コードを入力してください（例: ag01）。",
+                      ui.ButtonSet.OK_CANCEL);
+  if (a.getSelectedButton() !== ui.Button.OK) return;
+  const code = a.getResponseText();
+
+  let plan;
+  try {
+    plan = deleteAgencyCore_(code, true);
+  } catch (e) {
+    ui.alert("削除できません。\n\n" + e);
+    return;
+  }
+
+  const ok = ui.alert(
+    "次の代理店を削除します。よろしいですか。\n\n" +
+    "代理店コード: " + plan.code + "\n" +
+    "代理店名: " + plan.name + "\n" +
+    "担当者名: " + plan.person + "\n" +
+    "メール: " + plan.email + "\n" +
+    "顧客管理の担当者タブ: " + plan.customerTab,
+    ui.ButtonSet.OK_CANCEL);
+  if (ok !== ui.Button.OK) return;
+
+  try {
+    const done = deleteAgencyCore_(code, false);
+    ui.alert("削除しました。\n\n" + done.code + " / " + done.name +
+             "\n顧客管理の担当者タブ: " + done.customerTab);
+  } catch (e) {
+    ui.alert("削除に失敗しました。\n\n" + e);
+  }
+}
+
+// テストで作った代理店 ag01 を消すための直接実行用。
+// エディタから1回実行すれば済むよう、確認ダイアログを挟まない。
+function deleteTestAgencyAg01() {
+  const msg = JSON.stringify(deleteAgencyCore_("ag01", false));
+  Logger.log(msg);
+  return msg;
+}
