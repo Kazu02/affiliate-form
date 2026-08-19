@@ -285,6 +285,17 @@ function doPost(e) {
       Logger.log("LINE通知エラー: " + lineErr);
     }
 
+    // 代理店経由なら、その代理店へも新規申請を知らせる
+    try {
+      if (agencyName) {
+        notifyAgencyOfApplication_(agencyName,
+          config.formDisplayName || config.formTitle || formName,
+          data["name"] || "");
+      }
+    } catch (agencyMailErr) {
+      Logger.log("代理店への新規申請通知エラー: " + agencyMailErr);
+    }
+
     // 顧客管理シートに自動追加（紹介者名があるとき）。
     // 代理店経由の申請は上で referrer を代理店の担当者名に置き換えてあるので、
     // 自社・代理店を問わず同じ経路で顧客管理へ入る＝顧客の一元管理になる。
@@ -567,6 +578,7 @@ function onOpen() {
   applyReferrerSelectToJishaSheets();
   try { syncCaseMaster(); } catch (e) { Logger.log("案件マスタ同期エラー: " + e); }
   try { ensureAgencyNotifyTrigger(); } catch (e) { Logger.log("代理店通知トリガー登録エラー: " + e); }
+  try { ensureAppStatusTrigger(); } catch (e) { Logger.log("申請状況トリガー登録エラー: " + e); }
   SpreadsheetApp.getUi().createMenu("フォーム管理")
     .addItem("新規フォーム作成",       "showCreateFormDialog")
     .addItem("管理シートを更新",       "updateManagementSheet")
@@ -578,6 +590,7 @@ function onOpen() {
     .addItem("代理店を削除",                   "showAgencyDeletePrompt")
     .addItem("全代理店へリンク集を送り直す",   "resendAllAgencyLinks")
     .addItem("代理店別の取扱案件を同期",       "syncAgencyCaseMatrixFromMenu")
+    .addItem("申請状況一覧を作り直す（自社＋全代理店）", "buildApplicationStatusSheetFromMenu")
     .addItem("稼働の変更を代理店へ通知",       "notifyAgencyCaseChangesFromMenu")
     .addItem("稼働変更の日次通知を有効化",     "ensureAgencyNotifyTriggerFromMenu")
     .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
