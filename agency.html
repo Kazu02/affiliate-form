@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>代理店登録</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: #f1f5f9; color: #0f172a; line-height: 1.7;
+    padding: 24px 16px 60px; -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 1.25rem; font-weight: 700; margin-bottom: 8px; }
+  .lead { font-size: .88rem; color: #475569; margin-bottom: 22px; }
+
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; }
+
+  .group { margin-bottom: 18px; }
+  label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
+  .req { color: #dc2626; margin-left: 4px; }
+  input[type=text], input[type=email] {
+    width: 100%; padding: 11px 12px; font-size: 1rem; font-family: inherit;
+    border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a;
+  }
+  input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+  .hint { margin-top: 5px; font-size: .76rem; color: #94a3b8; }
+
+  button {
+    width: 100%; padding: 13px; font-size: .95rem; font-weight: 700; font-family: inherit;
+    background: #4f46e5; color: #fff; border: none; border-radius: 8px; cursor: pointer;
+  }
+  button:disabled { background: #a5b4fc; cursor: default; }
+
+  .banner {
+    display: none; border-radius: 8px; padding: 14px; font-size: .88rem;
+    line-height: 1.7; margin-bottom: 18px;
+  }
+  .banner.show { display: block; }
+  .banner.err { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+
+  .done { display: none; text-align: center; padding: 10px 0; }
+  .done.show { display: block; }
+  .done .title { font-size: 1.05rem; font-weight: 700; color: #15803d; margin-bottom: 10px; }
+  .done .body { font-size: .88rem; color: #475569; margin-bottom: 18px; }
+  .done a.links {
+    display: inline-block; background: #4f46e5; color: #fff; padding: 12px 20px;
+    border-radius: 8px; text-decoration: none; font-weight: 600; font-size: .9rem;
+  }
+  .done .raw { margin-top: 14px; font-size: .72rem; color: #94a3b8; word-break: break-all; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>代理店登録</h1>
+  <div class="lead">
+    ご登録いただくと、取扱い可能な案件のリンクをまとめた専用ページのURLを、
+    ご入力のメールアドレスへお送りします。
+  </div>
+
+  <div class="banner err" id="errBanner"></div>
+
+  <div class="card" id="formCard">
+    <form id="agencyForm" novalidate>
+      <div class="group">
+        <label for="agencyName">会社名<span class="req">*</span></label>
+        <input type="text" id="agencyName" name="agencyName" autocomplete="organization">
+      </div>
+      <div class="group">
+        <label for="personName">担当者名<span class="req">*</span></label>
+        <input type="text" id="personName" name="personName" autocomplete="name">
+        <div class="hint">申請の紹介者名としてこのお名前が記録されます。</div>
+      </div>
+      <div class="group">
+        <label for="email">メールアドレス<span class="req">*</span></label>
+        <input type="email" id="email" name="email" autocomplete="email" inputmode="email">
+        <div class="hint">こちらへ専用リンク集のURLをお送りします。</div>
+      </div>
+      <button type="submit" id="submitBtn">登録してリンク集を受け取る</button>
+    </form>
+  </div>
+
+  <div class="card done" id="doneCard">
+    <div class="title">登録が完了しました</div>
+    <div class="body" id="doneBody"></div>
+    <a class="links" id="linksBtn" href="#" target="_blank" rel="noopener">専用リンク集を開く</a>
+    <div class="raw" id="linksRaw"></div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var SIGNUP_KEY = (new URLSearchParams(window.location.search).get("k") || "").trim();
+
+  function showError(msg) {
+    var el = document.getElementById("errBanner");
+    el.textContent = msg;
+    el.classList.add("show");
+    window.scrollTo(0, 0);
+  }
+  function clearError() {
+    document.getElementById("errBanner").classList.remove("show");
+  }
+
+  document.getElementById("agencyForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    clearError();
+
+    var agencyName = document.getElementById("agencyName").value.trim();
+    var personName = document.getElementById("personName").value.trim();
+    var email      = document.getElementById("email").value.trim();
+
+    if (!agencyName) { showError("会社名を入力してください。"); return; }
+    if (!personName) { showError("担当者名を入力してください。"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showError("メールアドレスの形式が正しくありません。"); return;
+    }
+    if (typeof CONFIG === "undefined" || !CONFIG.gasUrl) {
+      showError("設定の読み込みに失敗しました。時間をおいて再度お試しください。"); return;
+    }
+
+    var btn = document.getElementById("submitBtn");
+    btn.disabled = true;
+    btn.textContent = "送信中...";
+
+    // Content-Type を text/plain にして CORS のプリフライトを避ける。
+    // これで応答を読めるので、メール送信に失敗してもURLを画面に出せる。
+    fetch(CONFIG.gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        action: "registerAgency",
+        signupKey: SIGNUP_KEY,
+        agencyName: agencyName,
+        personName: personName,
+        email: email
+      })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data || data.result === "error") {
+          btn.disabled = false;
+          btn.textContent = "登録してリンク集を受け取る";
+          showError((data && data.message) || "登録に失敗しました。");
+          return;
+        }
+        succeed(data, email);
+      })
+      .catch(function () {
+        // 応答が読めなかった場合。登録自体は通っている可能性が高いので、
+        // 断定せずメールの確認を案内する。
+        btn.disabled = false;
+        btn.textContent = "登録してリンク集を受け取る";
+        showError(
+          "応答を確認できませんでした。メールが届いているかご確認ください。" +
+          "届いていない場合は、お手数ですが担当者までご連絡ください。"
+        );
+      });
+  });
+
+  function succeed(data, email) {
+    document.getElementById("formCard").classList.add("hidden");
+    var body = document.getElementById("doneBody");
+    if (data.mailSent) {
+      body.textContent = email + " へ専用リンク集のURLをお送りしました。"
+        + "現在ご案内できる案件は " + (data.caseCount || 0) + " 件です。";
+    } else {
+      body.textContent = "メールの送信ができませんでした。"
+        + "お手数ですが下のリンクをブックマークしてお使いください。"
+        + "現在ご案内できる案件は " + (data.caseCount || 0) + " 件です。";
+    }
+    var a = document.getElementById("linksBtn");
+    a.href = data.linksUrl || "#";
+    document.getElementById("linksRaw").textContent = data.linksUrl || "";
+    document.getElementById("doneCard").classList.add("show");
+  }
+})();
+</script>
+</body>
+</html>

@@ -125,6 +125,15 @@
       border-radius: 8px; padding: 14px; color: #991b1b; font-size: 0.9rem; line-height: 1.6;
     }
     .error-banner.show { display: block; }
+    .suspended-banner {
+      display: none; background: #f8fafc; border: 1px solid #cbd5e1;
+      border-radius: 10px; padding: 22px 18px; text-align: center;
+    }
+    .suspended-banner.show { display: block; }
+    .suspended-title {
+      font-size: 1.05rem; font-weight: 700; color: #334155; margin-bottom: 10px;
+    }
+    .suspended-body { font-size: 0.88rem; color: #64748b; line-height: 1.8; }
     .fixed-field-note {
       margin-top: 6px; font-size: 0.78rem; color: #15803d; line-height: 1.5;
     }
@@ -145,6 +154,15 @@
   <!-- エラー -->
   <div class="error-banner" id="errorBanner">
     設定の読み込みに失敗しました。時間をおいて再度お試しください。
+  </div>
+
+  <!-- 受付停止（案件が稼働していない／代理店リンクが無効） -->
+  <div class="suspended-banner" id="suspendedBanner">
+    <div class="suspended-title">この案件は現在受付を停止しています</div>
+    <div class="suspended-body" id="suspendedBody">
+      恐れ入りますが、別の案件をご利用ください。<br>
+      ご不明な点は担当者までお問い合わせください。
+    </div>
   </div>
 
   <!-- フォーム本体 -->
@@ -214,6 +232,7 @@
   let GAS_URL = "";
   let DRAFT_KEY = "";
   let FIXED_REFERRER = "";
+  let AGENCY_CODE = "";
   const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
   // 紹介者固定リンクの記号→担当（例 ?form=ouchikuraberu-s）。担当追加時はここに1行足す。
   const REFERRER_SUFFIX_MAP = {
@@ -233,14 +252,25 @@
     const request = parseFormRequest();
     DRAFT_KEY = "affiliateFormDraft:" + (request.rawForm || request.formCode || "default");
     FIXED_REFERRER = request.fixedReferrer;
-    const url = request.formCode ? GAS_URL + "?form=" + encodeURIComponent(request.formCode) : GAS_URL;
+    AGENCY_CODE = request.agencyCode;
+    let url = request.formCode ? GAS_URL + "?form=" + encodeURIComponent(request.formCode) : GAS_URL;
+    if (AGENCY_CODE) {
+      url += (url.indexOf("?") >= 0 ? "&" : "?") + "ag=" + encodeURIComponent(AGENCY_CODE);
+    }
 
     try {
       const res    = await fetch(url, { method: "GET" });
       const config = await res.json();
       if (config.error) { showError(); return; }
+
+      // 稼働していない案件・無効な代理店リンクはフォームを出さない。
+      // 停止中のアフィリンクへ送ると「このキャンペーンは終了しました」に着地して
+      // 申請できないまま終わるため、その手前で止める。
+      if (config.suspended) { showSuspended(config.agencyError); return; }
+
       config.requestedFormName = request.rawForm || config.formName || request.formCode || "";
-      config.fixedReferrer = FIXED_REFERRER;
+      // 代理店リンクでは紹介者がGAS側で決まる（その代理店の担当者）。
+      config.fixedReferrer = config.fixedReferrer || FIXED_REFERRER;
       buildForm(config);
     } catch (e) {
       showError();
@@ -248,7 +278,9 @@
   }
 
   function parseFormRequest() {
-    const rawForm = (new URLSearchParams(window.location.search).get("form") || "").trim();
+    const params  = new URLSearchParams(window.location.search);
+    const rawForm = (params.get("form") || "").trim();
+    const agencyCode = (params.get("ag") || "").trim();
     let formCode = rawForm;
     let fixedReferrer = "";
     Object.keys(REFERRER_SUFFIX_MAP).forEach(suffix => {
@@ -257,7 +289,13 @@
         fixedReferrer = REFERRER_SUFFIX_MAP[suffix];
       }
     });
-    return { rawForm, formCode, fixedReferrer };
+    return { rawForm, formCode, fixedReferrer, agencyCode };
+  }
+
+  function showSuspended(message) {
+    document.getElementById("loading").classList.add("hidden");
+    if (message) document.getElementById("suspendedBody").textContent = message;
+    document.getElementById("suspendedBanner").classList.add("show");
   }
 
   function buildForm(config) {
@@ -388,6 +426,8 @@
     formData.formName       = config.formName || "";
     formData.screenshot     = await fileToBase64(screenshotFile);
     formData.screenshotName = screenshotFile.name;
+    // 代理店リンク経由なら誰の紹介かはGAS側で代理店マスタから決まる
+    if (AGENCY_CODE) formData.agencyCode = AGENCY_CODE;
 
     document.getElementById("sendingOverlay").classList.add("show");
     document.getElementById("submitBtn").disabled = true;
@@ -507,6 +547,16 @@
     if (!field) return;
     const el = document.getElementById("referrer");
     if (!el) return;
+
+    // 代理店リンクでは紹介者はその代理店の担当者ひとりに決まるので、欄自体を出さない。
+    // 値はGASが代理店マスタから入れるため、画面に持たせる必要がない。
+    if (config.agencyCode) {
+      const group = el.closest(".field-group");
+      if (group) group.style.display = "none";
+      el.removeAttribute("required");
+      setFieldValue(field, config.fixedReferrer);
+      return;
+    }
     if (el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === config.fixedReferrer)) {
       const option = document.createElement("option");
       option.value = config.fixedReferrer;

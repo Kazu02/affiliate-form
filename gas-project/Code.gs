@@ -127,10 +127,37 @@ function doGet(e) {
       return handleAdvertiserAdmin_(e.parameter.action || "preview", e.parameter.months || "",
                                     e.parameter.backup === "1");
     }
-const ss       = getOrCreateSpreadsheet();
+// 代理店専用リンク集。開くたびに呼ばれるので稼働状況がリアルタイムに反映される。
+    if (e && e.parameter && e.parameter.agency_links) {
+      return ContentService
+        .createTextOutput(JSON.stringify(agencyLinksPayload_(e.parameter.agency_links)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const ss       = getOrCreateSpreadsheet();
     const formName = (e && e.parameter && e.parameter.form) ? e.parameter.form : getFirstFormCode(ss);
     const config   = readConfig(ss, formName);
     config.formName = formName;
+
+    // 稼働していない案件は申請させない。停止中のアフィリンクへ顧客を送ると
+    // 「このキャンペーンは終了しました」に着地して申請できずに終わるため。
+    config.suspended = !isCaseActive_(formName);
+
+    // 代理店リンク（?ag=<代理店コード>）で開かれた場合。
+    // 代理店の紹介者はその担当者ひとりに決まるので、紹介者欄は出さず自動で入れる。
+    const agParam = (e && e.parameter && e.parameter.ag) ? String(e.parameter.ag).trim() : "";
+    if (agParam) {
+      const agency = findAgencyByCode_(agParam);
+      if (agency && agency.status === AGENCY_STATUS_ACTIVE) {
+        config.agencyCode   = agency.code;
+        config.agencyName   = agency.name;
+        config.fixedReferrer = agency.person;
+      } else {
+        config.suspended    = true;
+        config.agencyError  = "この代理店リンクは現在ご利用いただけません。";
+      }
+    }
+
     return ContentService
       .createTextOutput(JSON.stringify(config))
       .setMimeType(ContentService.MimeType.JSON);
@@ -166,12 +193,47 @@ function doPost(e) {
       return handleLineWebhook(data);
     }
 
+    // 代理店の新規登録（代理店自身が公開フォームから申し込む）。
+    // 公開経路なので合言葉を検証する（registerAgency_ の第2引数）。
+    if (data.action === "registerAgency") {
+      let out;
+      try {
+        out = registerAgency_(data, true);
+      } catch (regErr) {
+        out = { result: "error", message: String(regErr && regErr.message ? regErr.message : regErr) };
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify(out))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const ss       = getOrCreateSpreadsheet();
     const formName = data.formName || getFirstFormCode(ss);
     const config   = readConfig(ss, formName);
 
     const sheet = getConfigSheetByCode(ss, formName);
     if (!sheet) throw new Error("設定シート（フォーム記号: " + formName + "）が見つかりません。");
+
+    // 停止中の案件は受け付けない（画面側でも止めているが、直接POSTされた場合の防御）
+    if (!isCaseActive_(formName)) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ result: "error", message: "この案件は現在受付を停止しています。" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 代理店経由の申請。紹介者はその代理店の担当者に決まるので上書きする。
+    let agencyName = "";
+    const agencyCode = String(data.agencyCode || "").trim();
+    if (agencyCode) {
+      const agency = findAgencyByCode_(agencyCode);
+      if (!agency || agency.status !== AGENCY_STATUS_ACTIVE) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ result: "error", message: "この代理店リンクは現在ご利用いただけません。" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      agencyName    = agency.name;
+      data.referrer = agency.person;
+    }
 
     // G1にヘッダーがなければ初期化
     if (!sheet.getRange(1, ANSWER_START_COL).getValue()) {
@@ -188,7 +250,7 @@ function doPost(e) {
       ? saveScreenshot(data.screenshot, data.screenshotName, data)
       : "";
 
-    const rowData = buildRow(data, config, screenshotUrl, formName);
+    const rowData = buildRow(data, config, screenshotUrl, formName, agencyName);
     const nextRow = findNextAnswerRow(sheet);
     sheet.getRange(nextRow, ANSWER_START_COL, 1, rowData.length).setValues([rowData]);
 
@@ -223,7 +285,9 @@ function doPost(e) {
       Logger.log("LINE通知エラー: " + lineErr);
     }
 
-    // 顧客管理シートに自動追加（自社フォームのみ・紹介者名があるとき）
+    // 顧客管理シートに自動追加（紹介者名があるとき）。
+    // 代理店経由の申請は上で referrer を代理店の担当者名に置き換えてあるので、
+    // 自社・代理店を問わず同じ経路で顧客管理へ入る＝顧客の一元管理になる。
     try {
       const referrer = data["referrer"] || "";
       if (referrer && referrer !== "__other__") {
@@ -417,18 +481,20 @@ function readConfig(ss, formName) {
 }
 
 // ---- ヘッダー行を組み立て ----
+// 「代理店」は末尾に足す。末尾なので既存列の位置が動かず、既存データと
+// 既存処理（承認列の読み取り等）に影響しない。自社経由の申請では空になる。
 function buildHeaders(config) {
   const fieldLabels = config.fields.map(f => f.label);
-  return [FORM_CODE_HEADER, "受信日時", "クリック日時", "送信日時", ...fieldLabels, "スクショURL", "承認"];
+  return [FORM_CODE_HEADER, "受信日時", "クリック日時", "送信日時", ...fieldLabels, "スクショURL", "承認", AGENCY_COLUMN_LABEL];
 }
 
 // ---- データ行を組み立て ----
-function buildRow(data, config, screenshotUrl, formName) {
+function buildRow(data, config, screenshotUrl, formName, agencyName) {
   const receivedAt  = formatJST(new Date());
   const clickAt     = data.clickTime  ? formatJST(new Date(data.clickTime))  : "";
   const submitAt    = data.submitTime ? formatJST(new Date(data.submitTime)) : "";
   const fieldValues = config.fields.map(f => data[f.id] || "");
-  return [formName, receivedAt, clickAt, submitAt, ...fieldValues, screenshotUrl, ""];
+  return [formName, receivedAt, clickAt, submitAt, ...fieldValues, screenshotUrl, "", agencyName || ""];
 }
 
 // ---- スクショ保存フォルダをIDで取得（IDが無効なら名前検索してID保存） ----
@@ -499,9 +565,17 @@ function onOpen() {
   ensureQuest150Trigger();
   ensureEmergencyQuestTriggers();
   applyReferrerSelectToJishaSheets();
+  try { syncCaseMaster(); } catch (e) { Logger.log("案件マスタ同期エラー: " + e); }
   SpreadsheetApp.getUi().createMenu("フォーム管理")
     .addItem("新規フォーム作成",       "showCreateFormDialog")
     .addItem("管理シートを更新",       "updateManagementSheet")
+    .addSeparator()
+    .addItem("初回セットアップ（1回だけ）",     "setupCaseAgencyFeatureFromMenu")
+    .addItem("案件マスタを同期＋稼働を反映",   "syncCaseMasterAndApply")
+    .addItem("稼働状況をシート表示へ反映",     "applyCaseVisibilityFromMenu")
+    .addItem("代理店を登録（リンク集をメール送信）", "showAgencyRegisterPrompt")
+    .addItem("全代理店へリンク集を送り直す",   "resendAllAgencyLinks")
+    .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
     .addItem("代理店割り当て更新",     "rebuildAllAgencySpreadsheets")
     .addItem("旧共有SSをゴミ箱へ",     "deleteAllOldSharingSpreadsheets")
     .addSeparator()

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>代理店専用リンク集</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: #f1f5f9; color: #0f172a; line-height: 1.7;
+    padding: 20px 16px 60px; -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+
+  .head { margin-bottom: 20px; }
+  .head h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: .02em; }
+  .head .who { margin-top: 6px; font-size: .9rem; color: #475569; }
+
+  .notice {
+    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+    padding: 12px 14px; font-size: .82rem; color: #1e40af; margin-bottom: 20px;
+  }
+
+  .card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .card .name { font-size: 1rem; font-weight: 700; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    flex: 1 1 auto; min-width: 130px; text-align: center;
+    padding: 11px 14px; border-radius: 8px; font-size: .88rem; font-weight: 600;
+    text-decoration: none; border: none; cursor: pointer; font-family: inherit;
+  }
+  .btn-open { background: #4f46e5; color: #fff; }
+  .btn-open:active { transform: scale(.99); }
+  .btn-copy { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+  .btn-copy.done { background: #dcfce7; color: #166534; border-color: #86efac; }
+
+  .url {
+    margin-top: 10px; font-size: .72rem; color: #94a3b8;
+    word-break: break-all; line-height: 1.5;
+  }
+
+  .state { text-align: center; padding: 48px 20px; color: #64748b; font-size: .92rem; }
+  .state.error { color: #991b1b; }
+  .spinner {
+    width: 30px; height: 30px; margin: 0 auto 14px;
+    border: 3px solid #e2e8f0; border-top-color: #4f46e5;
+    border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .foot {
+    margin-top: 24px; font-size: .75rem; color: #94a3b8; text-align: center; line-height: 1.8;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="loading" class="state">
+    <div class="spinner"></div>
+    <div>読み込み中...</div>
+  </div>
+
+  <div id="errorState" class="state error hidden"></div>
+
+  <div id="content" class="hidden">
+    <div class="head">
+      <h1>取扱い可能な案件</h1>
+      <div class="who" id="who"></div>
+    </div>
+
+    <div class="notice">
+      このページは開くたびに最新の状態を読み込みます。<br>
+      取扱いを終了した案件は自動的に消え、新しく始まった案件は自動的に増えます。
+      ブックマークしてお使いください。
+    </div>
+
+    <div id="list"></div>
+
+    <div class="foot">
+      最終確認: <span id="updatedAt"></span><br>
+      案件について不明な点は担当者までお問い合わせください。
+    </div>
+  </div>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  function show(id)  { document.getElementById(id).classList.remove("hidden"); }
+  function hide(id)  { document.getElementById(id).classList.add("hidden"); }
+
+  function fail(msg) {
+    hide("loading");
+    var el = document.getElementById("errorState");
+    el.textContent = msg;
+    show("errorState");
+  }
+
+  function render(data) {
+    document.getElementById("who").textContent =
+      [data.agencyName, data.personName ? data.personName + " 様" : ""].filter(Boolean).join(" / ");
+    document.getElementById("updatedAt").textContent = data.updatedAt || "";
+
+    var list = document.getElementById("list");
+    list.innerHTML = "";
+
+    if (!data.cases || !data.cases.length) {
+      var empty = document.createElement("div");
+      empty.className = "state";
+      empty.textContent = "現在ご案内できる案件はありません。稼働を開始しましたらこのページに表示されます。";
+      list.appendChild(empty);
+    } else {
+      data.cases.forEach(function (c) {
+        var card = document.createElement("div");
+        card.className = "card";
+
+        var name = document.createElement("div");
+        name.className = "name";
+        name.textContent = c.caseName;
+        card.appendChild(name);
+
+        var row = document.createElement("div");
+        row.className = "row";
+
+        var open = document.createElement("a");
+        open.className = "btn btn-open";
+        open.href = c.url;
+        open.target = "_blank";
+        open.rel = "noopener";
+        open.textContent = "申請フォームを開く";
+        row.appendChild(open);
+
+        var copy = document.createElement("button");
+        copy.className = "btn btn-copy";
+        copy.type = "button";
+        copy.textContent = "リンクをコピー";
+        copy.addEventListener("click", function () {
+          copyText(c.url, copy);
+        });
+        row.appendChild(copy);
+
+        card.appendChild(row);
+
+        var url = document.createElement("div");
+        url.className = "url";
+        url.textContent = c.url;
+        card.appendChild(url);
+
+        list.appendChild(card);
+      });
+    }
+
+    hide("loading");
+    show("content");
+  }
+
+  function copyText(text, btn) {
+    function done() {
+      var prev = btn.textContent;
+      btn.textContent = "コピーしました";
+      btn.classList.add("done");
+      setTimeout(function () {
+        btn.textContent = prev;
+        btn.classList.remove("done");
+      }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+    } else {
+      fallback(text, done);
+    }
+  }
+
+  // iOS Safari など clipboard API が使えない環境向け
+  function fallback(text, done) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    try { document.execCommand("copy"); done(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  function init() {
+    if (typeof CONFIG === "undefined" || !CONFIG.gasUrl) {
+      fail("設定の読み込みに失敗しました。時間をおいて再度お試しください。");
+      return;
+    }
+    var token = (new URLSearchParams(window.location.search).get("t") || "").trim();
+    if (!token) {
+      fail("リンクが正しくありません。お送りしたURLをそのまま開いてください。");
+      return;
+    }
+
+    fetch(CONFIG.gasUrl + "?agency_links=" + encodeURIComponent(token), { method: "GET" })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data || data.error) {
+          fail((data && data.error) || "リンクが無効です。");
+          return;
+        }
+        render(data);
+      })
+      .catch(function () {
+        fail("読み込みに失敗しました。通信環境を確認して再度お試しください。");
+      });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
