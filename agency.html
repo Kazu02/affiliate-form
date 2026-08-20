@@ -128,6 +128,11 @@
     var btn = document.getElementById("submitBtn");
     btn.disabled = true;
     btn.textContent = "送信中...";
+    // 少し時間がかかることがあるので、止まったように見えないよう文言を進める。
+    // 途中で閉じられると登録だけ済んでURLが手元に残らないため。
+    var slow1 = setTimeout(function () { btn.textContent = "登録しています。そのままお待ちください..."; }, 4000);
+    var slow2 = setTimeout(function () { btn.textContent = "もう少しで完了します。閉じないでください..."; }, 12000);
+    var clearSlow = function () { clearTimeout(slow1); clearTimeout(slow2); };
 
     // Content-Type を text/plain にして CORS のプリフライトを避ける。
     // これで応答を読めるので、メール送信に失敗してもURLを画面に出せる。
@@ -144,6 +149,7 @@
     })
       .then(function (res) { return res.json(); })
       .then(function (data) {
+        clearSlow();
         if (!data || data.result === "error") {
           btn.disabled = false;
           btn.textContent = "登録してリンク集を受け取る";
@@ -155,6 +161,7 @@
       .catch(function () {
         // 応答が読めなかった場合。登録自体は通っている可能性が高いので、
         // 断定せずメールの確認を案内する。
+        clearSlow();
         btn.disabled = false;
         btn.textContent = "登録してリンク集を受け取る";
         showError(

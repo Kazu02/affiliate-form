@@ -285,6 +285,15 @@ function doPost(e) {
       Logger.log("LINE通知エラー: " + lineErr);
     }
 
+    // 申請状況一覧へ即時反映する。日次生成だけだとリンク集の件数が翌朝まで増えない。
+    try {
+      appendApplicationToStatusSheet_(
+        config.formDisplayName || config.formTitle || formName,
+        data["name"] || "", data["referrer"] || "", agencyName, screenshotUrl);
+    } catch (statusErr) {
+      Logger.log("申請状況一覧への即時反映エラー: " + statusErr);
+    }
+
     // 代理店経由なら、その代理店へも新規申請を知らせる
     try {
       if (agencyName) {

@@ -139,32 +139,31 @@ function syncAgencyCaseMatrixFromMenu() {
 // 代理店の実績カウント（リンク集の一枚もの用）
 // =============================================
 
-// 案件タブの「代理店」列を数えて {caseCode: 件数} を返す。
-// 代理店名で突き合わせるため、代理店名を変えると過去分は数えられなくなる点に注意。
-function countAgencyApplications_(agencyName) {
+// 代理店ごとの申請件数を {案件名: 件数} で返す。
+//
+// **申請状況一覧（生成物）を1回読むだけにする。** 以前は案件シートを1枚ずつ開いて
+// 「代理店」列を数えており、リンク集の表示に十数秒かかっていた（2026-08-20 実測）。
+// 申請状況一覧は日次トリガーで作り直されるので、件数は最大1日ぶん遅れる。
+// 代理店へ見せる目安の数字なので、速さを優先してよいと判断した。
+// 案件名で持つのは、申請状況一覧が案件コードを持たないため。
+function countAgencyApplicationsByName_(agencyName) {
   const name = String(agencyName || "").trim();
   const counts = {};
   if (!name) return counts;
 
   const ss = getOrCreateSpreadsheet();
-  listCaseSheets_(ss).forEach(function (c) {
-    const sheet = c.sheet;
-    const lastRow = sheet.getLastRow();
-    const lastCol = sheet.getLastColumn();
-    if (lastRow < 2 || lastCol < ANSWER_START_COL) { counts[c.code] = 0; return; }
+  const sh = ss.getSheetByName(APP_STATUS_SHEET);
+  if (!sh) return counts;                    // まだ生成されていない
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return counts;
 
-    const width = lastCol - ANSWER_START_COL + 1;
-    const headers = sheet.getRange(1, ANSWER_START_COL, 1, width).getValues()[0].map(String);
-    const off = headers.indexOf(AGENCY_COLUMN_LABEL);
-    if (off < 0) { counts[c.code] = 0; return; }
-
-    const col = ANSWER_START_COL + off;
-    const values = sheet.getRange(2, col, lastRow - 1, 1).getValues();
-    let n = 0;
-    for (let i = 0; i < values.length; i++) {
-      if (String(values[i][0] || "").trim() === name) n++;
-    }
-    counts[c.code] = n;
-  });
+  // B列=案件名 / E列=代理店 だけを読む
+  const vals = sh.getRange(2, 2, lastRow - 1, 4).getValues();  // B〜E
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][3] || "").trim() !== name) continue;     // E列
+    const caseName = String(vals[i][0] || "").trim();           // B列
+    if (!caseName) continue;
+    counts[caseName] = (counts[caseName] || 0) + 1;
+  }
   return counts;
 }

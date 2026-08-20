@@ -62,27 +62,47 @@ function getCaseMasterSheet_() {
 
 // 自社（代理店コード無し）の設定シートだけを列挙する。
 // 旧・代理店専用タブ（設定_○○（小中様）など）は案件として扱わない。
+//
+// **設定はシート先頭の数行にしかないので、そこだけ読む。**
+// 以前は getFormCodeFromSheet / getAgencyCode / 表示名の3回とも
+// sheet.getDataRange().getValues() を呼んでおり、回答データを含む全行×全列を
+// シート31枚ぶん3回読んでいた。代理店登録が56秒かかり、ブラウザ側が
+// エラーに見える状態になっていた（2026-08-20）。
+const CASE_CONFIG_SCAN_ROWS = 14; // 設定は8行目まで。余裕を見て14行。
+let _caseSheetsCache = null;      // 1回の実行の中だけ使う
+
 function listCaseSheets_(ss) {
+  if (_caseSheetsCache) return _caseSheetsCache;
   const out = [];
   ss.getSheets().forEach(function (sheet) {
-    if (!sheet.getName().startsWith(CONFIG_PREFIX)) return;
-    const code = getFormCodeFromSheet(sheet);
-    if (!code) return;
-    let agency = "";
-    try { agency = getAgencyCode(sheet); } catch (e) { agency = ""; }
-    if (agency && agency !== AGENCY_DEFAULT) return;
-    let displayName = code;
+    const sheetName = sheet.getName();
+    if (!sheetName.startsWith(CONFIG_PREFIX)) return;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 1) return;
+    const rows = Math.min(lastRow, CASE_CONFIG_SCAN_ROWS);
+
+    let code = "", agency = "", displayName = "";
     try {
-      const values = sheet.getDataRange().getValues();
-      for (let i = 0; i < values.length; i++) {
-        if (String(values[i][0]) === FORM_NAME_KEY && values[i][1]) {
-          displayName = String(values[i][1]);
-          break;
-        }
+      const conf = sheet.getRange(1, 1, rows, 2).getValues();
+      for (let i = 0; i < conf.length; i++) {
+        const k = String(conf[i][0]);
+        const v = conf[i][1];
+        if (k === FORM_CODE_HEADER && v) code = String(v).trim();
+        else if (k === AGENCY_KEY)      agency = v == null ? "" : String(v).trim();
+        else if (k === FORM_NAME_KEY && v) displayName = String(v).trim();
       }
-    } catch (e) {}
+    } catch (e) { return; }
+
+    // フォーム記号が無いシートはシート名から補う（getFormCodeFromSheet と同じ規則）
+    if (!code) code = sheetName.replace(CONFIG_PREFIX, "");
+    if (!code) return;
+    if (agency && agency !== AGENCY_DEFAULT) return;
+    if (!displayName) displayName = code;
+
     out.push({ code: code, name: displayName, sheet: sheet });
   });
+  _caseSheetsCache = out;
   return out;
 }
 
@@ -141,12 +161,23 @@ function isCaseActive_(formCode) {
   return map[String(formCode || "").trim()] === true;
 }
 
+// 稼働中の案件（コード・名前）を返す。
+// **案件マスタだけを1回読む。** 案件マスタに案件コードと案件名の両方があるので、
+// 設定シートを1枚ずつ開く必要がない。リンク集は代理店が開くたびに呼ばれるため、
+// ここが重いとページが十数秒かかる（2026-08-20 に実測して差し替えた）。
 function listActiveCases_() {
-  const ss = getOrCreateSpreadsheet();
-  const active = readCaseActiveMap_();
-  return listCaseSheets_(ss)
-    .filter(function (c) { return active[c.code] === true; })
-    .map(function (c) { return { code: c.code, name: c.name }; });
+  const sh = getCaseMasterSheet_();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  const rows = sh.getRange(2, 1, lastRow - 1, CM_HEADERS.length).getValues();
+  const out = [];
+  rows.forEach(function (r) {
+    const code = String(r[CM_COL_CODE - 1] || "").trim();
+    if (!code) return;
+    if (r[CM_COL_ACTIVE - 1] !== true) return;
+    out.push({ code: code, name: String(r[CM_COL_NAME - 1] || code).trim() });
+  });
+  return out;
 }
 
 // 稼働状態を設定タブの表示/非表示へ反映する。
@@ -159,11 +190,21 @@ function applyCaseVisibility() {
   ss.getSheets().forEach(function (sheet) {
     const name = sheet.getName();
     if (!name.startsWith(CONFIG_PREFIX)) return;
-    const code = getFormCodeFromSheet(sheet);
-    if (!code) return;
 
-    let agency = "";
-    try { agency = getAgencyCode(sheet); } catch (e) { agency = ""; }
+    // 設定は先頭数行にしかない。回答データまで読まない（listCaseSheets_ と同じ理由）。
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 1) return;
+    let code = "", agency = "";
+    try {
+      const conf = sheet.getRange(1, 1, Math.min(lastRow, CASE_CONFIG_SCAN_ROWS), 2).getValues();
+      for (let i = 0; i < conf.length; i++) {
+        const k = String(conf[i][0]);
+        if (k === FORM_CODE_HEADER && conf[i][1]) code = String(conf[i][1]).trim();
+        else if (k === AGENCY_KEY) agency = conf[i][1] == null ? "" : String(conf[i][1]).trim();
+      }
+    } catch (e) { return; }
+    if (!code) code = name.replace(CONFIG_PREFIX, "");
+    if (!code) return;
 
     if (agency && agency !== AGENCY_DEFAULT) {
       if (!sheet.isSheetHidden()) sheet.hideSheet();
@@ -576,15 +617,16 @@ function agencyLinksPayload_(token) {
     return { error: "このリンクは現在ご利用いただけません。" };
   }
   // 実績（そのリンクから何人申請したか）を添える。リンク集を一枚ものの管理画面にするため。
+  // 件数は申請状況一覧（日次生成）から引くので、最大1日ぶん遅れる。
   let counts = {};
-  try { counts = countAgencyApplications_(agency.name); } catch (e) { counts = {}; }
+  try { counts = countAgencyApplicationsByName_(agency.name); } catch (e) { counts = {}; }
 
   const cases = buildAgencyLinkList_(agency.code).map(function (c) {
     return {
       caseCode: c.caseCode,
       caseName: c.caseName,
       url: c.url,
-      count: counts[c.caseCode] || 0
+      count: counts[c.caseName] || 0
     };
   });
   let total = 0;

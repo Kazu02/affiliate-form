@@ -143,6 +143,22 @@ function buildApplicationStatusSheetFromMenu() {
   );
 }
 
+// 申請1件を申請状況一覧の先頭へ差し込む。
+//
+// 一覧は日次で作り直すが、それだけだと代理店が申請しても翌朝まで
+// リンク集の件数が0のままに見える（件数はこの一覧から引いているため）。
+// 新しい順に並んでいるので**2行目へ挿入**する。色は次の再生成で整う。
+// doPost から呼ぶので、失敗しても申請の記録は止めない。
+function appendApplicationToStatusSheet_(caseName, customerName, referrer, agencyName, screenshotUrl) {
+  const ss = getOrCreateSpreadsheet();
+  const sh = ss.getSheetByName(APP_STATUS_SHEET);
+  if (!sh) return; // まだ生成されていない。次の日次生成で入る。
+  sh.insertRowBefore(2);
+  sh.getRange(2, 1, 1, APP_STATUS_HEADERS.length).setValues([[
+    formatJST(new Date()), caseName, customerName, referrer, agencyName || "", "", screenshotUrl || ""
+  ]]);
+}
+
 // =============================================
 // 新規申請を代理店へ通知する
 // =============================================
