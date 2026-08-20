@@ -595,6 +595,7 @@ function onOpen() {
     .addSeparator()
     .addItem("ASP獲得ログと突合する",         "reconcileAspLogFromMenu")
     .addItem("ASP突合の修正を反映",           "applyAspReconciliationFromMenu")
+    .addItem("請求漏れ10件を承認へ直す（1回だけ）", "aspFix20260820FromMenu")
     .addItem("稼働の変更を代理店へ通知",       "notifyAgencyCaseChangesFromMenu")
     .addItem("稼働変更の日次通知を有効化",     "ensureAgencyNotifyTriggerFromMenu")
     .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
