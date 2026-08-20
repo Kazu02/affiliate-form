@@ -7,12 +7,17 @@
 // データは統合アプリ（Vercel + Neon・プロジェクト「アプリ化」）が持っている。
 // GASからNeonへは直接つなげないので、統合アプリの内部APIを叩く。
 //   GET <URL>/api/internal/customer-line-stats?date=YYYY-MM-DD
-//   Authorization: Bearer <INTERNAL_JOB_SECRET>
+//   Authorization: Bearer <専用の秘密値>
+//
+// **この秘密値の平文を持つのはここ（ScriptProperties）だけ。** 統合アプリ側は
+// CUSTOMER_LINE_STATS_SECRET_SHA256 として SHA-256 しか保存していないので、
+// 万一サーバー側の環境変数が漏れても、この口を叩くことはできない。
+// 権限も最小で、件数の読み取りしかできない（ジョブ実行はできない）。
 //
 // **URLと秘密値はソースに書かない。** このリポジトリは GitHub Pages の配信元で public。
 // ScriptProperties に置き、未設定なら日次レポートからこの節を黙って省く（fail-closed）。
 //   CUSTOMER_LINE_STATS_URL    : 統合アプリのオリジン（例 https://xxxx.vercel.app）
-//   CUSTOMER_LINE_STATS_SECRET : 統合アプリの INTERNAL_JOB_SECRET と同じ値
+//   CUSTOMER_LINE_STATS_SECRET : 平文。SHA-256 を統合アプリの環境変数へ登録しておく
 // =============================================
 
 const CL_STATS_URL_PROPERTY    = "CUSTOMER_LINE_STATS_URL";
@@ -123,7 +128,7 @@ function checkCustomerLineStatsFromMenu() {
 // 引数で渡した値はソースにもGitにも残らない。実行後は引数を消しておくこと。
 function setCustomerLineStatsConfig(origin, secret) {
   if (!origin || !secret) throw new Error("origin と secret の両方を渡してください。");
-  if (String(secret).length < 32) throw new Error("秘密値が短すぎます（統合アプリの INTERNAL_JOB_SECRET と同じ値）。");
+  if (String(secret).length < 32) throw new Error("秘密値が短すぎます（32文字以上）。");
   PropertiesService.getScriptProperties().setProperties({
     CUSTOMER_LINE_STATS_URL: String(origin).replace(/\/+$/, ""),
     CUSTOMER_LINE_STATS_SECRET: String(secret)
