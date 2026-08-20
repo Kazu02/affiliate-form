@@ -1776,7 +1776,11 @@ function buildLineMessage(config, rowData, formCode) {
     const val = rowData[4 + i];
     if (val !== "" && val !== undefined) lines.push(field.label + ": " + val);
   });
-  const screenshotUrl = rowData[rowData.length - 2];
+  // スクショURLの位置は buildHeaders の並びから引く。末尾からの相対位置で取ると、
+  // 末尾に列が増えたときに黙って別の列を読む（2026-08-19 に「代理店」を末尾へ足した結果、
+  // 承認列（常に空）を読んでスクショ行がLINE通知から消えていた）。
+  const shotIdx       = buildHeaders(config).indexOf("スクショURL");
+  const screenshotUrl = shotIdx >= 0 ? rowData[shotIdx] : "";
   if (screenshotUrl && String(screenshotUrl).startsWith("http")) {
     lines.push("スクショ: " + screenshotUrl);
   }
