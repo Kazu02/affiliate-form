@@ -184,14 +184,24 @@ function notifyAgencyOfApplication_(agencyName, caseName, customerName) {
 
 // 申請状況一覧を毎日作り直す。手で押さないと古いまま、を避けるため。
 // 申請のたびに作り直すと数百行の再生成が送信のたびに走るので、日次にしている。
-const APP_STATUS_TRIGGER_FN = "buildApplicationStatusSheet";
+// 申請状況一覧と代理店別サマリーをまとめて作り直す rebuildAgencyReports を回す。
+// 旧版は buildApplicationStatusSheet を直接登録していたので、見つけたら差し替える。
+const APP_STATUS_TRIGGER_FN     = "rebuildAgencyReports";
+const APP_STATUS_TRIGGER_FN_OLD = "buildApplicationStatusSheet";
 
 function ensureAppStatusTrigger() {
+  let removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === APP_STATUS_TRIGGER_FN_OLD) {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
+  });
   const exists = ScriptApp.getProjectTriggers().some(function (t) {
     return t.getHandlerFunction() === APP_STATUS_TRIGGER_FN;
   });
-  if (exists) return "既に登録済み";
+  if (exists) return removed ? "旧トリガーを削除しました（新は登録済み）" : "既に登録済み";
   ScriptApp.newTrigger(APP_STATUS_TRIGGER_FN)
     .timeBased().everyDays(1).atHour(7).create();
-  return "日次トリガーを登録しました（毎日7時台）";
+  return "日次トリガーを登録しました（毎日7時台）" + (removed ? "。旧トリガーは削除" : "");
 }

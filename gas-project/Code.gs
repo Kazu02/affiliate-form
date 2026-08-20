@@ -591,6 +591,7 @@ function onOpen() {
     .addItem("全代理店へリンク集を送り直す",   "resendAllAgencyLinks")
     .addItem("代理店別の取扱案件を同期",       "syncAgencyCaseMatrixFromMenu")
     .addItem("申請状況一覧を作り直す（自社＋全代理店）", "buildApplicationStatusSheetFromMenu")
+    .addItem("代理店別サマリーを作り直す（件数・承認率）", "buildAgencySummarySheetFromMenu")
     .addItem("稼働の変更を代理店へ通知",       "notifyAgencyCaseChangesFromMenu")
     .addItem("稼働変更の日次通知を有効化",     "ensureAgencyNotifyTriggerFromMenu")
     .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
