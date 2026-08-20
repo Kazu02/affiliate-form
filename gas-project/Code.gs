@@ -1779,10 +1779,16 @@ function buildLineMessage(config, rowData, formCode) {
   // スクショURLの位置は buildHeaders の並びから引く。末尾からの相対位置で取ると、
   // 末尾に列が増えたときに黙って別の列を読む（2026-08-19 に「代理店」を末尾へ足した結果、
   // 承認列（常に空）を読んでスクショ行がLINE通知から消えていた）。
-  const shotIdx       = buildHeaders(config).indexOf("スクショURL");
-  const screenshotUrl = shotIdx >= 0 ? rowData[shotIdx] : "";
-  if (screenshotUrl && String(screenshotUrl).startsWith("http")) {
-    lines.push("スクショ: " + screenshotUrl);
+  const shotIdx = buildHeaders(config).lastIndexOf("スクショURL");
+  const shotVal = shotIdx >= 0 ? String(rowData[shotIdx] || "").trim() : "";
+  // スクショはフォーム側で必須にしてあるので「URLが無い」＝異常。行ごと落とすと今回と同じ
+  // 「気づけない消え方」になるため、保存失敗も取得不能も1行として必ず出す。
+  if (shotVal.startsWith("http")) {
+    lines.push("スクショ: " + shotVal);
+  } else if (shotVal) {
+    lines.push("スクショ: 保存に失敗しました（" + shotVal.substring(0, 120) + "）");
+  } else {
+    lines.push("スクショ: 取得できませんでした（要確認）");
   }
   return lines.join("\n");
 }
