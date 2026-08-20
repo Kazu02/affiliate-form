@@ -612,6 +612,7 @@ function onOpen() {
     .addItem("旧共有SSをゴミ箱へ",     "deleteAllOldSharingSpreadsheets")
     .addSeparator()
     .addItem("日次レポート（テスト送信）",           "dailyReport")
+    .addItem("顧客LINE登録集計を確認",             "checkCustomerLineStatsFromMenu")
     .addItem("30件クエスト進捗（テスト送信）",       "campaignReport")
     .addItem("150件クエスト進捗（テスト送信）",     "quest150Report")
     .addItem("緊急クエスト進捗（テスト送信）",       "emergencyQuestReportTest")
@@ -2008,6 +2009,15 @@ function dailyReport() {
 
   const referrerSection = buildMonthlyReferrerSection(ss, thisMonth);
 
+  // 顧客向け公式LINEの「営業担当ごとの登録数」。統合アプリから取る。
+  // 未設定・取得失敗なら空文字が返るので、日次レポート自体は止まらない。
+  let customerLineSection = "";
+  try {
+    customerLineSection = buildCustomerLineStatsSection_(yesterday);
+  } catch (e) {
+    Logger.log("顧客LINE登録の節を作れませんでした: " + e);
+  }
+
   let message;
   if (reports.length === 0) {
     message = "【日次レポート】" + yesterday + "\n\n申請はありませんでした。\n\n今月累計: 0件";
@@ -2019,6 +2029,7 @@ function dailyReport() {
             + "\n今月累計: " + totalMonthly + "件";
     if (referrerSection) message += "\n\n" + referrerSection;
   }
+  if (customerLineSection) message += "\n\n" + customerLineSection;
 
   notifyLineGroup(message);
   Logger.log(message);
