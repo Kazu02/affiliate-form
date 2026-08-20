@@ -623,6 +623,7 @@ function onOpen() {
     .addItem("フォーム記号を修復",               "repairFormCodeRows")
     .addSeparator()
     .addItem("スクショフォルダを再登録",   "resetScreenshotFolder")
+    .addItem("直近5件をLINEへ再通知（内容を確認してから送信）", "resendRecentApplicationsFromMenu")
     .addSeparator()
     .addItem("営業担当を同期（選択肢＋担当タブ＋データ再生成）", "syncSalesRoster")
     .addItem("顧客管理シートを作成",           "createCustomerManagementSheet")

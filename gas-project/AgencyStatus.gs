@@ -34,8 +34,11 @@ function toDateForSort_(v) {
   return isNaN(t2) ? 0 : t2;
 }
 
+// 文字列で書いた受信日時をシートがDateに直すことがあるので、Dateも文字列も同じ見た目に戻す。
+// formatJST は「渡した瞬間を+9hしてUTCの数字で読む」= JSTの壁時計を出す関数なので、
+// ここで先に -9h してはいけない（打ち消し合ってUTCが出る。実際に9時間早い時刻が出ていた）。
 function toDisplayDate_(v) {
-  if (v instanceof Date) return formatJST(new Date(v.getTime() - 9 * 60 * 60 * 1000));
+  if (v instanceof Date) return formatJST(v);
   return String(v || "");
 }
 
