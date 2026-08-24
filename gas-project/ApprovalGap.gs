@@ -216,9 +216,6 @@ function buildApprovalGapSheet() {
   const tally = { A: 0, B: 0, C: 0, D: 0, dead: 0, approved: 0, waiting: 0 };
 
   own.forEach(function (o) {
-    // 既に承認が付いている申請は漏れではない
-    if (getAdvertiserApprovalFlags(o.appr).approved) { tally.approved++; return; }
-
     const st = stats[o.caseName] || { approved: 0, total: 0, lastClickMs: 0 };
     const keyMs = o.clickMs || o.recvMs;
 
@@ -230,6 +227,16 @@ function buildApprovalGapSheet() {
       const d = Math.abs(cand[k].a.ms - keyMs);
       if (d > AG_TOLERANCE_SEC * 1000) continue;
       if (best === null || d < best.d) best = { d: d, a: cand[k].a, i: cand[k].i };
+    }
+
+    // **既に承認が付いている申請も、先にASP行を取らせてから外す。**
+    // 取らせずに外すと、その申請に対応するASP行が空いたままになり、
+    // 120秒以内に並ぶ別の申請がそれを拾ってしまう。拾われた側は
+    // 「ASPに記録がある」ことになり、**本来の型C（記録なし）が消える。**
+    if (getAdvertiserApprovalFlags(o.appr).approved) {
+      if (best) used[best.i] = true;
+      tally.approved++;
+      return;
     }
 
     let type = "", aspStatus = "", reward = "", link = "生存", sendOk = "";
