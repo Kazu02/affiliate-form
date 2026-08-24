@@ -38,6 +38,9 @@ const AG_SLOW_CASES   = ["保険マンモス", "スマモニ", "ポケットリ�
 // クリック日時の許容差。AspReconcile と同じ理由で±120秒（一致するときは中央値0秒）。
 const AG_TOLERANCE_SEC = 120;
 
+// Driveに置くCSVのファイル名。**固定にする**（検索に頼らず完全一致で引くため）。
+const ASP_LOG_CSV_NAME = "ASP獲得ログ.csv";
+
 const AG_HEADERS = [
   "型", "案件名", "顧客名", "紹介者（営業）", "代理店", "受信日時", "クリック日時",
   "ASPステータス", "経過日数", "報酬額", "リンク生死", "スクショURL",
@@ -94,11 +97,153 @@ function agDateToMillis_(v) {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], -9, 0, 0); // JSTの0時
 }
 
+// 自社の案件名とASPの広告名で表記が違うものの対応表。
+//
+// aspNameMatches_ は「【】（）を落として前方後方の包含」で見るので、片方が
+// もう片方を含まない綴りは拾えない。実例: 自社「SREリアリティー」/ ASP「SREリアルティ」。
+// **拾えないと、その案件の申請が丸ごと「ASPに該当案件なし」へ落ちて見えなくなる**
+// （2026-08-24 の初回実行で5件がこれに該当した）。
+// 新しい案件を足したとき「対象外・ASPに該当案件なし」に出てきたら、ここに1行足す。
+const AG_CASE_ALIASES = {
+  "SREリアリティー": "SREリアルティ"
+};
+
+function agNameMatches_(adName, caseName) {
+  const alias = AG_CASE_ALIASES[String(caseName || "").trim()];
+  if (alias && aspNameMatches_(adName, alias)) return true;
+  return aspNameMatches_(adName, caseName);
+}
+
 // 履歴の引き継ぎキー。**行番号を使わない。**
 // 行は案件シート側の編集で動くので、行番号で引き継ぐと別の申請の確認結果を持ち込む。
 function agKeyOf_(caseName, customerName, recvMs) {
   const t = recvMs ? Math.floor(recvMs / 60000) : 0; // 分まで（秒のゆらぎを吸収）
   return String(caseName || "") + "|" + String(customerName || "").trim() + "|" + t;
+}
+
+// ---------------------------------------------------------------
+// Step1: ASP獲得ログCSVをDriveから取り込む
+//
+// ASPはセッションCookieでログインするため **GASからCSVを直接取得できない**。
+// 人がダウンロードしたCSVをDriveへ置き、この関数で取り込む。
+// スプレッドシートのインポートダイアログを操作するより手数が少なく、
+// 失敗したときに理由が分かる（ダイアログは黙って別のシートへ入ることがある）。
+// ---------------------------------------------------------------
+
+// CSVを1行ずつに分ける。**引用符の中の改行とカンマを壊さない。**
+// リファラや案件名にカンマが入りうるので split(",") では読めない。
+function agParseCsv_(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (inQuotes) {
+      if (c === '"') {
+        if (text.charAt(i + 1) === '"') { field += '"'; i++; }  // "" はエスケープされた "
+        else inQuotes = false;
+      } else field += c;
+      continue;
+    }
+    if (c === '"') { inQuotes = true; continue; }
+    if (c === ",") { row.push(field); field = ""; continue; }
+    if (c === "\r") continue;
+    if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; continue; }
+    field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(function (r) { return r.some(function (v) { return String(v).trim() !== ""; }); });
+}
+
+// fileIdOrName を省略すると Drive の ASP_LOG_CSV_NAME（固定名）を使う
+function importAspLogFromDrive(fileIdOrName) {
+  let file = null;
+  const q = String(fileIdOrName || "").trim();
+
+  if (q) {
+    try { file = DriveApp.getFileById(q); } catch (e) { file = null; }
+    if (!file) {
+      const it = DriveApp.getFilesByName(q);
+      if (it.hasNext()) file = it.next();
+    }
+    if (!file) throw new Error("Driveに見つかりません: " + q);
+  } else {
+    // **固定名の完全一致で探すのを第一手にする。**
+    //
+    // searchFiles の contains は当てにしない。2026-08-24 に実測したところ、
+    // Drive REST v3 で name contains 'ASP獲得ログ' は1件返るのに、
+    // 同じ内容で DriveApp.searchFiles は0件だった（title の方は「無効な引数: q」で例外）。
+    // **「0件＝Driveに無い」と誤診断する。** getFilesByName は検索構文もインデックスも
+    // 通さない直接引きなので確実。だからファイル名は固定にする（日付は中身から分かる）。
+    //
+    // なお searchFiles は遅延イテレータを返すので、クエリが不正でも呼び出し時点では
+    // 例外が出ず hasNext() で初めて飛ぶ。try/catch は反復ごと全体にかける。
+    const it = DriveApp.getFilesByName(ASP_LOG_CSV_NAME);
+    while (it.hasNext()) {
+      const f = it.next();
+      if (!file || f.getLastUpdated() > file.getLastUpdated()) file = f;
+    }
+    if (!file) {
+      try {
+        const s = DriveApp.searchFiles("name contains 'ASP獲得ログ' and trashed = false");
+        while (s.hasNext()) {
+          const f = s.next();
+          if (!/\.csv$/i.test(f.getName())) continue;
+          if (!file || f.getLastUpdated() > file.getLastUpdated()) file = f;
+        }
+      } catch (e) {
+        Logger.log("Drive検索をスキップ: " + e);
+      }
+    }
+    if (!file) {
+      throw new Error("Driveに「" + ASP_LOG_CSV_NAME + "」がありません。" +
+                      "ASPからダウンロードしたCSVをこの名前でDriveへ置いてから実行してください" +
+                      "（日付は中身から分かるので、ファイル名は固定にしてあります）。" +
+                      "別名で置いた場合は importAspLogFromDrive(\"ファイル名またはID\") を実行してください。");
+    }
+  }
+
+  // **UTF-8で読む。** 2026-08-20 に Shift_JIS と記録したのは誤りで、実物は UTF-8。
+  let text = file.getBlob().getDataAsString("UTF-8");
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // BOMを落とす
+
+  const rows = agParseCsv_(text);
+  if (rows.length < 2) throw new Error("CSVに行がありません: " + file.getName());
+
+  const head = rows[0].map(String);
+  if (head.indexOf("クリック日時") < 0 || head.indexOf("ステータス") < 0) {
+    throw new Error("見出しに「クリック日時」「ステータス」がありません。" +
+                    "獲得ログのCSVか確認してください: " + file.getName());
+  }
+
+  const sh = getAspLogSheet_();
+  sh.clear();
+  const width = Math.max.apply(null, rows.map(function (r) { return r.length; }));
+  const norm = rows.map(function (r) {
+    const a = r.slice(0, width);
+    while (a.length < width) a.push("");
+    return a;
+  });
+  sh.getRange(1, 1, norm.length, width).setValues(norm);
+  const hr = sh.getRange(1, 1, 1, width);
+  hr.setFontWeight("bold").setBackground("#334155").setFontColor("#ffffff");
+  sh.setFrozenRows(1);
+  SpreadsheetApp.flush();
+
+  return { file: file.getName(), updated: file.getLastUpdated(), rows: norm.length - 1 };
+}
+
+function importAspLogFromDriveFromMenu() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const r = importAspLogFromDrive();
+    ui.alert("ASP獲得ログを取り込みました。\n\n" +
+             "ファイル: " + r.file + "\n" +
+             "最終更新: " + r.updated + "\n" +
+             "取り込んだ行: " + r.rows + " 件\n\n" +
+             "続けて「承認漏れを棚卸しする」を実行してください。");
+  } catch (e) {
+    ui.alert("取り込めませんでした。\n\n" + e);
+  }
 }
 
 // ---------------------------------------------------------------
@@ -166,7 +311,7 @@ function agAspStatsByCase_(aspRows, caseNames) {
   });
   aspRows.forEach(function (a) {
     caseNames.forEach(function (cn) {
-      if (!aspNameMatches_(a.ad, cn)) return;
+      if (!agNameMatches_(a.ad, cn)) return;
       const s = stats[cn];
       s.total++;
       if (a.status === "承認") s.approved++;
@@ -204,7 +349,7 @@ function buildApprovalGapSheet() {
   caseNames.forEach(function (cn) {
     const list = [];
     aspRows.forEach(function (a, i) {
-      if (aspNameMatches_(a.ad, cn)) list.push({ a: a, i: i });
+      if (agNameMatches_(a.ad, cn)) list.push({ a: a, i: i });
     });
     aspByCase[cn] = list;
   });
@@ -213,7 +358,8 @@ function buildApprovalGapSheet() {
   own.sort(function (x, y) { return y.recvMs - x.recvMs; });
 
   const rows = [];
-  const tally = { A: 0, B: 0, C: 0, D: 0, dead: 0, approved: 0, waiting: 0 };
+  const tally = { A: 0, B: 0, C: 0, D: 0, dead: 0, approved: 0, waiting: 0, noAspCase: 0 };
+  const noAspCases = [];   // ASPに1件も行が無い案件（名寄せ漏れの可視化に使う）
 
   own.forEach(function (o) {
     const st = stats[o.caseName] || { approved: 0, total: 0, lastClickMs: 0 };
@@ -262,6 +408,18 @@ function buildApprovalGapSheet() {
         type = st.approved > 0 ? "B" : "A";
         sendOk = (type === "A") ? "出す" : ""; // 型Aは営業確認が要らないのですぐ出せる
       }
+    } else if (st.total === 0) {
+      // **その案件のASP行が1件も無い。** これはトラッキング漏れではない。
+      // 「この案件はこのASPの扱いではない」か「案件名がASP側と対応づいていない」。
+      // トラッキング漏れとして営業へ回すと、確かめようのない確認を大量に投げることになる
+      // （2026-08-24 の初回実行で、ノムコム84件・アイネット証券7件がこれで型Cに化けた）。
+      // **判断できないものは型を付けず、依頼にも出さない。**
+      aspStatus = "ASPに該当案件なし";
+      type = "-";
+      link = "対象外";
+      sendOk = "出さない";
+      tally.noAspCase++;
+      if (noAspCases.indexOf(o.caseName) < 0) noAspCases.push(o.caseName);
     } else {
       // ASPに記録が無い。トラッキング漏れ **または** リンク切れ。
       // その案件のASP最終クリックより後の申請は、リンクが死んでいた可能性が高い。
@@ -296,7 +454,7 @@ function buildApprovalGapSheet() {
   });
 
   // 型A → 型B → 型C → 型D、同じ型の中は経過日数の長い順
-  const order = { A: 0, B: 1, C: 2, D: 3 };
+  const order = { A: 0, B: 1, C: 2, D: 3, "-": 4 };
   rows.sort(function (x, y) {
     const d = order[x.values[0]] - order[y.values[0]];
     if (d !== 0) return d;
@@ -354,7 +512,7 @@ function buildApprovalGapSheet() {
       SpreadsheetApp.newDataValidation().requireValueInList(AG_ADV_CHOICES, true).build());
 
     // 型ごとに色を付ける。型A＝営業確認が要らない（＝すぐ出せる）ことが一目で分かるように。
-    const tint = { A: "#dcfce7", B: "#fef9c3", C: "#e0f2fe", D: "#f1f5f9" };
+    const tint = { A: "#dcfce7", B: "#fef9c3", C: "#e0f2fe", D: "#f1f5f9", "-": "#f5f5f4" };
     const bg = rows.map(function (r) {
       const c = r.values[AGC_LINK - 1] === "リンク切れ疑い" ? "#f5f5f4" : (tint[r.values[0]] || "#ffffff");
       return AG_HEADERS.map(function () { return c; });
@@ -374,6 +532,7 @@ function buildApprovalGapSheet() {
   return {
     A: tally.A, B: tally.B, C: tally.C, D: tally.D,
     dead: tally.dead, approved: tally.approved, waiting: tally.waiting,
+    noAspCase: tally.noAspCase, noAspCases: noAspCases,
     total: rows.length, carried: carried, ownTotal: own.length
   };
 }
@@ -737,7 +896,9 @@ function buildApprovalGapFromMenu() {
       "型B（同案件に承認実績あり・個別の取り残し）: " + r.B + " 件\n" +
       "型C（ASPに記録なし・トラッキング漏れ疑い）: " + r.C + " 件\n" +
       "型D（否認）: " + r.D + " 件\n" +
-      "リンク切れ疑い（依頼の対象外）: " + r.dead + " 件\n\n" +
+      "リンク切れ疑い（依頼の対象外）: " + r.dead + " 件\n" +
+      "対象外・ASPに該当案件なし: " + r.noAspCase + " 件" +
+      (r.noAspCases.length ? "（" + r.noAspCases.join("・") + "）" : "") + "\n\n" +
       "承認済み: " + r.approved + " 件 / まだ待ちの範囲（しきい値内）: " + r.waiting + " 件\n" +
       "前回の確認結果を引き継いだ行: " + r.carried + " 件\n\n" +
       "型Aは営業確認が要らないので「広告主への確認依頼を作る」をすぐ実行できます。\n" +

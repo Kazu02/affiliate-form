@@ -606,6 +606,7 @@ function onOpen() {
     .addItem("ASP突合の修正を反映",           "applyAspReconciliationFromMenu")
     .addItem("請求漏れ10件を承認へ直す（1回だけ）", "aspFix20260820FromMenu")
     .addSeparator()
+    .addItem("ASP獲得ログCSVをDriveから取り込む", "importAspLogFromDriveFromMenu")
     .addItem("承認漏れを棚卸しする", "buildApprovalGapFromMenu")
     .addItem("営業担当へ確認を依頼（SS2へ書き出し）", "pushSalesApprovalChecksFromMenu")
     .addItem("営業の確認結果を取り込む", "pullSalesApprovalChecksFromMenu")
