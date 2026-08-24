@@ -605,6 +605,14 @@ function onOpen() {
     .addItem("ASP獲得ログと突合する",         "reconcileAspLogFromMenu")
     .addItem("ASP突合の修正を反映",           "applyAspReconciliationFromMenu")
     .addItem("請求漏れ10件を承認へ直す（1回だけ）", "aspFix20260820FromMenu")
+    .addSeparator()
+    .addItem("承認漏れを棚卸しする", "buildApprovalGapFromMenu")
+    .addItem("営業担当へ確認を依頼（SS2へ書き出し）", "pushSalesApprovalChecksFromMenu")
+    .addItem("営業の確認結果を取り込む", "pullSalesApprovalChecksFromMenu")
+    .addItem("広告主への確認依頼を作る（成果管理SSへ追記）", "pushAdvertiserRequestsFromMenu")
+    .addItem("広告主の回答を取り込む", "pullAdvertiserAnswersFromMenu")
+    .addItem("承認された分を自社シートへ反映", "applyApprovalGapFromMenu")
+    .addSeparator()
     .addItem("稼働の変更を代理店へ通知",       "notifyAgencyCaseChangesFromMenu")
     .addItem("稼働変更の日次通知を有効化",     "ensureAgencyNotifyTriggerFromMenu")
     .addItem("回答シートに「代理店」列を追加", "ensureAgencyColumnFromMenu")
@@ -2041,6 +2049,11 @@ function dailyReport() {
     if (referrerSection) message += "\n\n" + referrerSection;
   }
   if (customerLineSection) message += "\n\n" + customerLineSection;
+
+  // 承認漏れの確認が止まっていないか。督促を人の記憶に依存させない。
+  // 中で try/catch しており、取れなければ空文字が返る（この節のせいで日次が止まらない）。
+  const approvalGapSection = buildApprovalGapSection_();
+  if (approvalGapSection) message += "\n" + approvalGapSection;
 
   notifyLineGroup(message);
   Logger.log(message);
