@@ -183,11 +183,16 @@ function resubmitPayload_(token) {
   if (state === RS_STATE_DONE) return { ok: false, reason: "used" };
   if (state === RS_STATE_VOID) return { ok: false, reason: "void" };
   if (rsIsExpired_(v)) return { ok: false, reason: "expired" };
+  // **日付は必ず整形して返す。** シートへ書いた時点で Sheets が Date に変換するため、
+  // String() をかけると "Sun Aug 23 2026 17:12:10 GMT+0900" のような英語表記になり、
+  // slice(0,10) では "Sun Aug 23" という無意味な文字列が顧客の画面に出る。
+  const recvMs = aspToMillis_(v[RSC_RECV - 1]);
+  const expMs  = agDateToMillis_(v[RSC_EXPIRE - 1]);
   return {
     ok: true,
     caseName: String(v[RSC_CASE - 1] || ""),
-    appliedAt: String(v[RSC_RECV - 1] || "").slice(0, 10),
-    expire: String(v[RSC_EXPIRE - 1] || "")
+    appliedAt: recvMs ? formatJST(new Date(recvMs)).slice(0, 10) : "",
+    expire:    expMs  ? formatJST(new Date(expMs)).slice(0, 10)  : ""
   };
 }
 

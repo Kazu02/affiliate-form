@@ -24,7 +24,9 @@
     .lead { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; }
     ul.points { margin: 0 0 18px 1.1rem; font-size: 0.9rem; color: #555; line-height: 1.9; }
     ul.points strong { color: #b45309; }
+    /* label は既定が inline。block にしないと破線の枠が行内で分断されて崩れる */
     .drop {
+      display: block;
       border: 2px dashed #cbd5e1; border-radius: 10px; padding: 26px 16px;
       text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
       background: #fafafa;
@@ -141,10 +143,20 @@
     b.classList.add("show");
   }
 
-  async function load() {
+  // fetch に期限を付ける。**付けないと固まったときに永久に「読み込んでいます…」のまま**になる。
+  // GAS は最初の1回が遅いことがあり（コールドスタート）、実際に検証中これで固まった。
+  async function fetchWithTimeout(url, ms) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try { return await fetch(url, { signal: ctl.signal }); }
+    finally { clearTimeout(timer); }
+  }
+
+  async function load(attempt) {
+    attempt = attempt || 1;
     if (!TOKEN) { showError(REASON.notfound); return; }
     try {
-      const res = await fetch(CONFIG.gasUrl + "?rs=" + encodeURIComponent(TOKEN));
+      const res = await fetchWithTimeout(CONFIG.gasUrl + "?rs=" + encodeURIComponent(TOKEN), 20000);
       const j = await res.json();
       if (!j.ok) { showError(REASON[j.reason] || REASON.notfound); return; }
       document.getElementById("mCase").textContent = j.caseName || "—";
@@ -153,7 +165,9 @@
       document.getElementById("loading").classList.add("hidden");
       document.getElementById("main").classList.remove("hidden");
     } catch (err) {
-      showError("読み込みに失敗しました。通信環境をご確認のうえ、再度お試しください。");
+      if (attempt < 3) { return load(attempt + 1); }   // 2回まで自動で入れ直す
+      showError("読み込みに失敗しました。通信環境をご確認のうえ、再度お試しください。" +
+                "何度お試しいただいても表示されない場合は担当者へご連絡ください。");
     }
   }
 
