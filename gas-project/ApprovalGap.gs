@@ -38,6 +38,22 @@ const AG_SLOW_CASES   = ["保険マンモス", "スマモニ", "ポケットリ�
 // クリック日時の許容差。AspReconcile と同じ理由で±120秒（一致するときは中央値0秒）。
 const AG_TOLERANCE_SEC = 120;
 
+// 時刻がずれている行を拾うための追加の窓。**狭い順にかける。**
+//
+// **クリック日時は2026-08-26まで利用者の端末時計で記録していた。** ずれている端末では
+// 分〜時間の単位でずれるため±120秒では当たらない。実測で自社618件のうち180件が当たらず、
+// ASP側でも131件が当たっていない＝**大半は同じ成果が結びついていないだけ**。
+//
+// 窓を広げるだけだと別人に当ててしまうので、**その窓に未使用の候補がちょうど1件の
+// ときだけ**当てる。2件以上あれば当てずっぽうになるので当てない。
+//
+// 窓の大きさは実データの密度から決めた（2026-08-27 実測・ASP478件）。
+// 同一案件・同窓内に自分しかいない割合＝候補が一意に決まりうる割合:
+//   ±2時間 66% / ±12時間 35% / ±36時間 13%
+// **広すぎると候補が増えて逆に当たらない。** 先に狭い窓で密な案件を片付けてから
+// 広い窓へ進むと、疎な案件の大きなずれ（時差設定の誤りなど）だけを安全に拾える。
+const AG_WIDE_WINDOWS_MS = [2 * 3600 * 1000, 36 * 3600 * 1000];
+
 // Driveに置くCSVのファイル名。**固定にする**（検索に頼らず完全一致で引くため）。
 const ASP_LOG_CSV_NAME = "ASP獲得ログ.csv";
 
@@ -45,7 +61,7 @@ const AG_HEADERS = [
   "型", "案件名", "顧客名", "紹介者（営業）", "代理店", "受信日時", "クリック日時",
   "ASPステータス", "経過日数", "報酬額", "リンク生死", "スクショURL",
   "営業確認", "営業コメント", "依頼可否", "依頼ID", "依頼日",
-  "広告主回答", "回答日", "結果", "対象シート", "対象行"
+  "広告主回答", "回答日", "結果", "対象シート", "対象行", "突合方法"
 ];
 // 1始まりの列番号（並べ替えたら必ずここも直す）
 const AGC_TYPE = 1, AGC_CASE = 2, AGC_NAME = 3, AGC_REF = 4, AGC_AGENCY = 5,
@@ -53,7 +69,7 @@ const AGC_TYPE = 1, AGC_CASE = 2, AGC_NAME = 3, AGC_REF = 4, AGC_AGENCY = 5,
       AGC_LINK = 11, AGC_SHOT = 12, AGC_SALESCHK = 13, AGC_SALESCMT = 14,
       AGC_SENDOK = 15, AGC_REQID = 16, AGC_REQDATE = 17,
       AGC_ADVANS = 18, AGC_ANSDATE = 19, AGC_RESULT = 20,
-      AGC_SHEET = 21, AGC_ROW = 22;
+      AGC_SHEET = 21, AGC_ROW = 22, AGC_HOW = 23;
 
 const AG_SALES_CHOICES  = ["未確認", "OK", "要再取得", "取下げ"];
 const AG_ADV_CHOICES    = ["承認", "否認", "該当なし", "確認中"];
@@ -357,15 +373,14 @@ function buildApprovalGapSheet() {
   // 受信日時の新しい順に処理する（新しい申請ほど記憶が新しく、確認が取りやすい）
   own.sort(function (x, y) { return y.recvMs - x.recvMs; });
 
-  const rows = [];
-  const tally = { A: 0, B: 0, C: 0, D: 0, dead: 0, approved: 0, waiting: 0, noAspCase: 0 };
-  const noAspCases = [];   // ASPに1件も行が無い案件（名寄せ漏れの可視化に使う）
+  // ---- 突合は2段構え。先に厳しい方を全件やってから、余ったものを広く見る ----
+  // 順番が大事。1回目を全件終える前に2回目をやると、**本来ぴったり当たるはずのASP行を
+  // 別の申請が広い窓で先に取ってしまう**。
+  const matchOf = new Array(own.length);
 
-  own.forEach(function (o) {
-    const st = stats[o.caseName] || { approved: 0, total: 0, lastClickMs: 0 };
+  // 1回目: クリック日時が±120秒
+  own.forEach(function (o, oi) {
     const keyMs = o.clickMs || o.recvMs;
-
-    // 同じ案件のASP行のうち、まだ使われていない中で最も近いものを取る
     const cand = aspByCase[o.caseName] || [];
     let best = null;
     for (let k = 0; k < cand.length; k++) {
@@ -374,28 +389,74 @@ function buildApprovalGapSheet() {
       if (d > AG_TOLERANCE_SEC * 1000) continue;
       if (best === null || d < best.d) best = { d: d, a: cand[k].a, i: cand[k].i };
     }
+    if (best) { used[best.i] = true; best.how = "時刻一致"; matchOf[oi] = best; }
+  });
 
-    // **既に承認が付いている申請も、先にASP行を取らせてから外す。**
-    // 取らせずに外すと、その申請に対応するASP行が空いたままになり、
-    // 120秒以内に並ぶ別の申請がそれを拾ってしまう。拾われた側は
-    // 「ASPに記録がある」ことになり、**本来の型C（記録なし）が消える。**
-    if (getAdvertiserApprovalFlags(o.appr).approved) {
-      if (best) used[best.i] = true;
-      tally.approved++;
-      return;
-    }
+  // 2回目以降: 時刻がずれていても、同じ案件で未使用の候補が**ちょうど1件**なら当てる。
+  // **狭い窓から順に。** 先に狭い窓で密な案件を片付けると、広い窓の番になったとき
+  // 候補が減っていて一意に決まりやすくなる。
+  AG_WIDE_WINDOWS_MS.forEach(function (win) {
+    const label = "時刻ずれ（±" + Math.round(win / 3600000) + "時間・候補1件）";
+    own.forEach(function (o, oi) {
+      if (matchOf[oi]) return;
+      const keyMs = o.clickMs || o.recvMs;
+      const cand = aspByCase[o.caseName] || [];
+      const near = [];
+      for (let k = 0; k < cand.length; k++) {
+        if (used[cand[k].i]) continue;
+        if (Math.abs(cand[k].a.ms - keyMs) > win) continue;
+        near.push(cand[k]);
+        if (near.length > 1) break;   // 2件見つかった時点で当てない
+      }
+      if (near.length === 1) {
+        used[near[0].i] = true;
+        matchOf[oi] = { d: Math.abs(near[0].a.ms - keyMs), a: near[0].a, i: near[0].i, how: label };
+      }
+    });
+  });
+
+  const rows = [];
+  const tally = { A: 0, B: 0, C: 0, D: 0, dead: 0, approved: 0, waiting: 0, noAspCase: 0, guessApproved: 0 };
+  const noAspCases = [];   // ASPに1件も行が無い案件（名寄せ漏れの可視化に使う）
+  const howTally = {};     // どの窓で当たったかの内訳（効果を見るため）
+
+  own.forEach(function (o, oi) {
+    const st = stats[o.caseName] || { approved: 0, total: 0, lastClickMs: 0 };
+    const keyMs = o.clickMs || o.recvMs;
+    const best = matchOf[oi];   // 上の2段の突合で決まっている（ASP行は消費済み）
+
+    // 既に自社の承認欄が埋まっている申請は漏れではない
+    if (getAdvertiserApprovalFlags(o.appr).approved) { tally.approved++; return; }
 
     let type = "", aspStatus = "", reward = "", link = "生存", sendOk = "";
     let ageMs = keyMs;
+    const how = best ? best.how : "";
+    if (how) howTally[how] = (howTally[how] || 0) + 1;
 
     if (best) {
-      used[best.i] = true;
       aspStatus = best.a.status;
       reward = best.a.reward;
       if (aspStatus === "承認") {
-        // ASPは承認済みだが自社の承認欄が空。これは AspReconcile.gs 側の仕事（要修正）。
-        // 承認漏れではないので、ここでは扱わずに数だけ持つ。
-        tally.approved++;
+        // **時刻がぴったり当たった行だけ、黙って除外してよい。**
+        // 広い窓で当てた行は誤マッチの可能性が残る（実測で1〜4%）。それを「承認済み」として
+        // 消すと、**本物の承認漏れが痕跡なく消える**。この案件で何度も踏んだ失い方なので、
+        // 推定で当てた分は消さずに、理由を書いてシートへ残す（依頼には出さない）。
+        if (how === "時刻一致") { tally.approved++; return; }
+        aspStatus = "ASPで承認済みの可能性（時刻ずれで推定）";
+        type = "-";
+        link = "要目視";
+        sendOk = "出さない";
+        tally.guessApproved++;
+        rows.push({
+          key: agKeyOf_(o.caseName, o.name, o.recvMs),
+          values: [
+            type, o.caseName, o.name, o.referrer, o.agency,
+            o.recvMs ? formatJST(new Date(o.recvMs)) : "",
+            o.clickMs ? formatJST(new Date(o.clickMs)) : "",
+            aspStatus, agDaysBetween_(ageMs, nowMs), reward, link, o.shot,
+            "未確認", "", sendOk, "", "", "", "", "", o.sheetName, o.row, how
+          ]
+        });
         return;
       }
       if (aspStatus === "否認") {
@@ -451,7 +512,7 @@ function buildApprovalGapSheet() {
         o.recvMs ? formatJST(new Date(o.recvMs)) : "",
         o.clickMs ? formatJST(new Date(o.clickMs)) : "",
         aspStatus, agDaysBetween_(ageMs, nowMs), reward, link, o.shot,
-        "未確認", "", sendOk, "", "", "", "", "", o.sheetName, o.row
+        "未確認", "", sendOk, "", "", "", "", "", o.sheetName, o.row, how
       ]
     });
   });
@@ -532,11 +593,13 @@ function buildApprovalGapSheet() {
   sh.setColumnWidth(AGC_CLICK, 150);
   sh.setColumnWidth(AGC_SHOT, 240);
   sh.setColumnWidth(AGC_SALESCMT, 240);
+  sh.setColumnWidth(AGC_HOW, 150);
 
   return {
     A: tally.A, B: tally.B, C: tally.C, D: tally.D,
     dead: tally.dead, approved: tally.approved, waiting: tally.waiting,
-    noAspCase: tally.noAspCase, noAspCases: noAspCases,
+    noAspCase: tally.noAspCase, noAspCases: noAspCases, howTally: howTally,
+    guessApproved: tally.guessApproved,
     total: rows.length, carried: carried, ownTotal: own.length
   };
 }
@@ -1134,9 +1197,13 @@ function buildApprovalGapFromMenu() {
       "型C（ASPに記録なし・トラッキング漏れ疑い）: " + r.C + " 件\n" +
       "型D（否認）: " + r.D + " 件\n" +
       "リンク切れ疑い（依頼の対象外）: " + r.dead + " 件\n" +
+      "ASPで承認済みの可能性（時刻ずれで推定・要目視）: " + r.guessApproved + " 件\n" +
       "対象外・ASPに該当案件なし: " + r.noAspCase + " 件" +
       (r.noAspCases.length ? "（" + r.noAspCases.join("・") + "）" : "") + "\n\n" +
       "承認済み: " + r.approved + " 件 / まだ待ちの範囲（しきい値内）: " + r.waiting + " 件\n" +
+      "突合の内訳: " + (Object.keys(r.howTally).length
+        ? Object.keys(r.howTally).map(function (k) { return k + " " + r.howTally[k] + "件"; }).join(" / ")
+        : "（なし）") + "\n" +
       "前回の確認結果を引き継いだ行: " + r.carried + " 件\n\n" +
       "型Aは営業確認が要らないので「案件単位の確認依頼を作る（型A）」をすぐ実行できます。\n" +
       "  ※型Aは案件単位で出します。行単位だとASPに成果があるのに自社に申請行が無いものを\n" +
