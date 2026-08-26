@@ -406,7 +406,10 @@ function buildApprovalGapSheet() {
         const days = agDaysBetween_(ageMs, nowMs);
         if (days < agThresholdDays_(o.caseName)) { tally.waiting++; return; }
         type = st.approved > 0 ? "B" : "A";
-        sendOk = (type === "A") ? "出す" : ""; // 型Aは営業確認が要らないのですぐ出せる
+        // **型Aは行単位で出さない。** 案件単位（ASPの件数）で出すのが正しく、
+        // 行単位だと自社に申請行が無い成果を取りこぼす（2026-08-24: 21件 vs 55件）。
+        // メニュー「案件単位の確認依頼を作る（型A）」が担当する。
+        sendOk = (type === "A") ? "案件単位" : "";
       }
     } else if (st.total === 0) {
       // **その案件のASP行が1件も無い。** これはトラッキング漏れではない。
@@ -507,7 +510,8 @@ function buildApprovalGapSheet() {
     sh.getRange(2, AGC_SALESCHK, rows.length, 1).setDataValidation(
       SpreadsheetApp.newDataValidation().requireValueInList(AG_SALES_CHOICES, true).build());
     sh.getRange(2, AGC_SENDOK, rows.length, 1).setDataValidation(
-      SpreadsheetApp.newDataValidation().requireValueInList(["出す", "出さない"], true).build());
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(["出す", "出さない", "案件単位"], true).build());
     sh.getRange(2, AGC_ADVANS, rows.length, 1).setDataValidation(
       SpreadsheetApp.newDataValidation().requireValueInList(AG_ADV_CHOICES, true).build());
 
@@ -701,11 +705,15 @@ function pushAdvertiserRequests() {
   const toAdd = [];
   const idByRow = {};
   data.forEach(function (r, i) {
+    const type = String(r[AGC_TYPE - 1] || "");
+    // **型Aは行単位では絶対に出さない。** 案件単位の依頼（承認確認依頼_案件単位）が担当する。
+    // 依頼可否の値だけで判断すると、この変更より前に作られた行が「出す」のまま残っていて
+    // **同じ成果を2つの形で二重に出す**ことになる。型そのもので弾く。
+    if (type === "A") return;
     if (String(r[AGC_SENDOK - 1] || "") !== "出す") return;
     // **既に依頼IDが付いている行は二度と載せない。** 同じ案件が2行並ぶと広告主側で
     // 「どちらに答えたか」が分からなくなる。出し直したいときは依頼IDを手で消す。
     if (String(r[AGC_REQID - 1] || "")) return;
-    const type = String(r[AGC_TYPE - 1] || "");
     seq++;
     const id = "REQ-" + stamp + "-" + ("000" + seq).slice(-4);
     const note = (type === "A")
@@ -775,6 +783,168 @@ function pullAdvertiserAnswers() {
   });
   SpreadsheetApp.flush();
   return { updated: updated };
+}
+
+// ---------------------------------------------------------------
+// 型Aは「案件単位」で出す
+//
+// **自社の申請行から作ってはいけない。** 型Aは「その案件で1件も承認が出ていない」という
+// 話で、証拠はASPの獲得ログそのもの。自社に申請行が無い成果も対象に含まれる。
+// 2026-08-24 の実測では、自社起点だと21件、ASP起点だと55件（差の34件はASPに成果が
+// あるのに自社に申請行が無いもの）。**自社起点で出すと34件を自分から取り下げることになる。**
+// ---------------------------------------------------------------
+
+const AG_CASE_REQUEST_SHEET = "承認確認依頼_案件単位";
+const AG_CASE_REQ_HEADERS = [
+  "依頼ID", "依頼日", "広告名", "対象期間", "件数", "報酬額合計",
+  "ASPでの承認実績", "当方の記録",
+  "確認結果【広告主記入】", "理由・コメント【広告主記入】", "回答日【広告主記入】"
+];
+
+// ASP獲得ログから、承認実績が0の案件のうち、しきい値を超えた承認待ちを案件ごとに集める
+function collectCaseLevelTypeA_() {
+  const asp = collectAspLogRows_();
+  if (!asp.length) {
+    throw new Error("ASP獲得ログにデータがありません。先にCSVを取り込んでください。");
+  }
+  const byAd = {};
+  asp.forEach(function (a) {
+    if (!byAd[a.ad]) byAd[a.ad] = { ad: a.ad, approved: 0, total: 0, waiting: [] };
+    const g = byAd[a.ad];
+    g.total++;
+    if (a.status === "承認") g.approved++;
+    else if (a.status === "承認待ち") g.waiting.push(a);
+  });
+
+  const now = Date.now();
+  const out = [];
+  Object.keys(byAd).forEach(function (ad) {
+    const g = byAd[ad];
+    if (g.approved > 0) return;                 // 承認実績があるなら型Aではない
+    const th = agThresholdDays_(ad);
+    const over = g.waiting.filter(function (a) { return agDaysBetween_(a.ms, now) >= th; });
+    if (!over.length) return;
+
+    let min = null, max = null, sum = 0;
+    over.forEach(function (a) {
+      if (min === null || a.ms < min) min = a.ms;
+      if (max === null || a.ms > max) max = a.ms;
+      sum += Number(a.reward) || 0;
+    });
+    out.push({
+      ad: ad, count: over.length, sum: sum, total: g.total,
+      from: formatJST(new Date(min)).slice(0, 10),
+      to:   formatJST(new Date(max)).slice(0, 10)
+    });
+  });
+  out.sort(function (x, y) { return y.count - x.count; });
+  return out;
+}
+
+function agCaseRequestSheet_() {
+  const ss = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+  let sh = ss.getSheetByName(AG_CASE_REQUEST_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(AG_CASE_REQUEST_SHEET, 0);
+    sh.getRange(1, 1).setValue(
+      "案件ごとの承認状況の確認依頼です。下記の案件は、記載の期間で当方の成果が" +
+      "一件も承認されておりません。承認処理の状況をご確認のうえ、右の3列へご記入ください。");
+    sh.getRange(1, 1).setFontWeight("bold");
+    const hr = sh.getRange(2, 1, 1, AG_CASE_REQ_HEADERS.length);
+    hr.setValues([AG_CASE_REQ_HEADERS]);
+    hr.setFontWeight("bold").setBackground("#334155").setFontColor("#ffffff").setWrap(true);
+    sh.setFrozenRows(2);
+    sh.getRange(2, 9, 1, 3).setBackground("#b45309");
+  }
+  // **幅は毎回あてる。** 作成時だけだと、後から直したくなったときに手で触るしかなくなる。
+  // 依頼IDは広告主が回答で引用する列なので、見切れさせない。
+  sh.setColumnWidth(1, 175); sh.setColumnWidth(2, 95);  sh.setColumnWidth(3, 300);
+  sh.setColumnWidth(4, 180); sh.setColumnWidth(5, 60);  sh.setColumnWidth(6, 110);
+  sh.setColumnWidth(7, 200); sh.setColumnWidth(8, 320);
+  sh.setColumnWidth(9, 150); sh.setColumnWidth(10, 280); sh.setColumnWidth(11, 130);
+  return sh;
+}
+
+// **追記する。既存行は消さない**（広告主の記入を消すため）。
+// 同じ広告名で未回答の依頼が残っているときは二重に出さない。
+function pushAdvertiserCaseRequests() {
+  const list = collectCaseLevelTypeA_();
+  if (!list.length) return { added: 0, skipped: 0, cases: {} };
+
+  const sh = agCaseRequestSheet_();
+  const last = sh.getLastRow();
+  const open = {};
+  if (last >= 3) {
+    sh.getRange(3, 1, last - 2, AG_CASE_REQ_HEADERS.length).getValues().forEach(function (r) {
+      const ad = String(r[2] || "").trim();
+      const answered = String(r[8] || "").trim();
+      if (ad && (!answered || answered === "確認中")) open[ad] = true;
+    });
+  }
+
+  const today = formatJST(new Date()).slice(0, 10);
+  const stamp = today.replace(/[^0-9]/g, "");
+  let seq = last >= 3 ? last - 2 : 0;
+  const add = [], cases = {};
+  let skipped = 0;
+
+  list.forEach(function (c) {
+    if (open[c.ad]) { skipped++; return; }       // 未回答の依頼が残っている
+    seq++;
+    add.push([
+      "CASE-" + stamp + "-" + ("00" + seq).slice(-3), today, c.ad,
+      c.from + " 〜 " + c.to, c.count, c.sum,
+      "0件（この案件のASP記録 計" + c.total + "件）",
+      "記載期間の成果が一件も承認されていません。承認処理の状況をご確認ください。",
+      "", "", ""
+    ]);
+    cases[c.ad] = c.count;
+  });
+
+  if (!add.length) return { added: 0, skipped: skipped, cases: {} };
+
+  const start = Math.max(last + 1, 3);
+  sh.getRange(start, 1, add.length, AG_CASE_REQ_HEADERS.length).setValues(add);
+  sh.getRange(start, 9, add.length, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(AG_ADV_CHOICES, true).build());
+  sh.getRange(start, 9, add.length, 3).setBackground("#fff7ed");
+  sh.getRange(start, 6, add.length, 1).setNumberFormat("#,##0");
+  SpreadsheetApp.flush();
+
+  let sum = 0;
+  add.forEach(function (r) { sum += Number(r[5]) || 0; });
+  return { added: add.length, skipped: skipped, cases: cases, sum: sum };
+}
+
+function pushAdvertiserCaseRequestsFromMenu() {
+  const ui = SpreadsheetApp.getUi();
+  let preview;
+  try { preview = collectCaseLevelTypeA_(); }
+  catch (e) { ui.alert("集計できませんでした。\n\n" + e); return; }
+
+  if (!preview.length) { ui.alert("案件単位で出す対象がありませんでした。"); return; }
+  let total = 0, yen = 0;
+  const lines = preview.map(function (c) {
+    total += c.count; yen += c.sum;
+    return "  " + c.ad + "\n    " + c.count + "件 / " + c.sum.toLocaleString() +
+           "円 / " + c.from + "〜" + c.to;
+  });
+  const ok = ui.alert(
+    "以下を広告主成果管理SSの「" + AG_CASE_REQUEST_SHEET + "」へ追記します。\n\n" +
+    lines.join("\n") + "\n\n合計 " + total + "件 / " + yen.toLocaleString() + "円\n\n" +
+    "既存の行は消しません。未回答の依頼が残っている案件は二重に出しません。\n" +
+    "よろしいですか。", ui.ButtonSet.OK_CANCEL);
+  if (ok !== ui.Button.OK) return;
+
+  try {
+    const r = pushAdvertiserCaseRequests();
+    ui.alert("案件単位の確認依頼を追記しました。\n\n" +
+             "追記: " + r.added + " 件（" + (r.sum || 0).toLocaleString() + "円）\n" +
+             "スキップ: " + r.skipped + " 件（未回答の依頼が残っている案件）\n\n" +
+             "広告主成果管理SSの「" + AG_CASE_REQUEST_SHEET + "」タブを共有してください。");
+  } catch (e) {
+    ui.alert("追記できませんでした。\n\n" + e);
+  }
 }
 
 // ---------------------------------------------------------------
@@ -901,7 +1071,9 @@ function buildApprovalGapFromMenu() {
       (r.noAspCases.length ? "（" + r.noAspCases.join("・") + "）" : "") + "\n\n" +
       "承認済み: " + r.approved + " 件 / まだ待ちの範囲（しきい値内）: " + r.waiting + " 件\n" +
       "前回の確認結果を引き継いだ行: " + r.carried + " 件\n\n" +
-      "型Aは営業確認が要らないので「広告主への確認依頼を作る」をすぐ実行できます。\n" +
+      "型Aは営業確認が要らないので「案件単位の確認依頼を作る（型A）」をすぐ実行できます。\n" +
+      "  ※型Aは案件単位で出します。行単位だとASPに成果があるのに自社に申請行が無いものを\n" +
+      "    取りこぼします（実測 21件 vs 55件）。\n" +
       "型B・型Cは先に「営業担当へ確認を依頼」を実行してください。");
   } catch (e) {
     ui.alert("棚卸しできませんでした。\n\n" + e);

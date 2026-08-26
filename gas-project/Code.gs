@@ -634,6 +634,7 @@ function onOpen() {
     .addItem("営業担当へ確認を依頼（SS2へ書き出し）", "pushSalesApprovalChecksFromMenu")
     .addItem("営業の確認結果を取り込む", "pullSalesApprovalChecksFromMenu")
     .addItem("再提出URLを発行する（要再取得の分）", "issueResubmitFromMenu")
+    .addItem("案件単位の確認依頼を作る（型A・成果管理SSへ追記）", "pushAdvertiserCaseRequestsFromMenu")
     .addItem("広告主への確認依頼を作る（成果管理SSへ追記）", "pushAdvertiserRequestsFromMenu")
     .addItem("広告主の回答を取り込む", "pullAdvertiserAnswersFromMenu")
     .addItem("承認された分を自社シートへ反映", "applyApprovalGapFromMenu")
