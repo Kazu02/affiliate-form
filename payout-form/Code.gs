@@ -554,18 +554,43 @@ function syncFormChoices_(form) {
 // 自由記述の設問を用意する。**既にあれば何もしない**（setup() は何度でも回るため）。
 // afterIndex が有効なら、その直後へ移す（離れていると書き忘れる）。
 function ensureReferrerOtherItem_(form, afterIndex) {
+  var found = findItemByTitle_(form, Q_REFERRER_OTHER);
+  var created = false;
+
+  if (!found) {
+    form.addTextItem()
+      .setTitle(Q_REFERRER_OTHER)
+      .setHelpText("上で「" + REFERRER_OTHER + "」を選んだ場合のみ、ご紹介者のお名前をご記入ください。" +
+                   "担当者名を選ばれた方は空欄で構いません。")
+      .setRequired(false); // **必須にしない。** 大多数は担当者を選ぶので、必須だと全員が詰まる
+    // addTextItem() が返すのは TextItem。位置を動かすメソッドを持たないので、
+    // getItems() から汎用 Item として取り直す。
+    found = findItemByTitle_(form, Q_REFERRER_OTHER);
+    created = true;
+    Logger.log("自由記述の設問を追加: " + Q_REFERRER_OTHER);
+  }
+
+  // 紹介者欄の直後へ揃える。**作成済みでもずれていれば直す**
+  // （2026-08-25 の初回実行で、追加はできたが移動で落ちて末尾に残った）。
+  // **`item.setIndex()` は使えない。** setIndex を持つのは汎用 Item だけで、
+  // addTextItem() が返す TextItem には無い（TypeError になる）。Form.moveItem を使う。
+  if (found && afterIndex >= 0) {
+    var want = afterIndex + 1;
+    if (found.getIndex() !== want) {
+      form.moveItem(found.getIndex(), want);
+      Logger.log("自由記述の設問を紹介者欄の直後へ移動: index " + want);
+    }
+  }
+  return created;
+}
+
+// タイトル一致で設問を1つ返す（無ければ null）。getItems() は汎用 Item を返すので位置も動かせる。
+function findItemByTitle_(form, title) {
   var all = form.getItems();
   for (var i = 0; i < all.length; i++) {
-    if (all[i].getTitle().trim() === Q_REFERRER_OTHER) return false; // 既にある
+    if (all[i].getTitle().trim() === title) return all[i];
   }
-  var item = form.addTextItem()
-    .setTitle(Q_REFERRER_OTHER)
-    .setHelpText("上で「" + REFERRER_OTHER + "」を選んだ場合のみ、ご紹介者のお名前をご記入ください。" +
-                 "担当者名を選ばれた方は空欄で構いません。")
-    .setRequired(false);   // **必須にしない。** 大多数は担当者を選ぶので、必須だと全員が詰まる
-  if (afterIndex >= 0) item.setIndex(afterIndex + 1);
-  Logger.log("自由記述の設問を追加: " + Q_REFERRER_OTHER);
-  return true;
+  return null;
 }
 
 // 回答から紹介者を決める。「その他」なら自由記述の値を採る。
