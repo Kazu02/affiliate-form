@@ -201,6 +201,18 @@ function doPost(e) {
       return handleLineWebhook(data);
     }
 
+    // アフィリエイトボタンが押された知らせ。**サーバー側の時刻を記録するためだけ。**
+    // 端末時計のずれで突合が48%しか当たらない問題への対処（ClickLog.gs 参照）。
+    // ここで失敗しても申請そのものには影響しない。
+    if (data.action === "clickPing") {
+      let out;
+      try { out = handleClickPing_(data); }
+      catch (cpErr) { Logger.log("clickPing エラー: " + cpErr); out = { result: "error" }; }
+      return ContentService
+        .createTextOutput(JSON.stringify(out))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // スクショの再提出。トークンが唯一の資格情報なので、期限・使い切り・
     // 対象行の照合は handleResubmit_ 側でまとめて検証する。
     if (data.action === "resubmit") {
@@ -534,7 +546,9 @@ function buildHeaders(config) {
 // ---- データ行を組み立て ----
 function buildRow(data, config, screenshotUrl, formName, agencyName) {
   const receivedAt  = formatJST(new Date());
-  const clickAt     = data.clickTime  ? formatJST(new Date(data.clickTime))  : "";
+  // サーバー記録があればそちらを使う（端末時計のずれを持ち込まない）。
+  // 引けなければ従来どおり端末の申告値に落ちる。ClickLog.gs 参照。
+  const clickAt     = resolveClickAt_(data);
   const submitAt    = data.submitTime ? formatJST(new Date(data.submitTime)) : "";
   const fieldValues = config.fields.map(f => data[f.id] || "");
   return [formName, receivedAt, clickAt, submitAt, ...fieldValues, screenshotUrl, "", agencyName || ""];
@@ -636,6 +650,7 @@ function onOpen() {
     .addItem("再提出URLを発行する（要再取得の分）", "issueResubmitFromMenu")
     .addItem("案件単位の確認依頼を作る（型A・成果管理SSへ追記）", "pushAdvertiserCaseRequestsFromMenu")
     .addItem("案件単位の依頼の状況を見る", "showCaseRequestStatusFromMenu")
+    .addItem("端末時計とのずれを確認する", "checkClickTimeDrift")
     .addItem("広告主への確認依頼を作る（成果管理SSへ追記）", "pushAdvertiserRequestsFromMenu")
     .addItem("広告主の回答を取り込む", "pullAdvertiserAnswersFromMenu")
     .addItem("承認された分を自社シートへ反映", "applyApprovalGapFromMenu")

@@ -194,6 +194,7 @@
           ✅ クリック時刻を記録しました：<strong id="clickTimeText"></strong>
         </div>
         <input type="hidden" id="clickTime" name="clickTime">
+        <input type="hidden" id="clickId" name="clickId">
       </div>
 
       <div class="step">
@@ -230,6 +231,19 @@
 <script src="config.js"></script>
 <script>
   let GAS_URL = "";
+
+  // クリックとフォーム送信を結ぶための一意な値。
+  // crypto.randomUUID が無い環境（古いiOS等）でも動くよう手作りの経路を残す。
+  function newClickId() {
+    try {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+      const a = new Uint8Array(16);
+      crypto.getRandomValues(a);
+      return Array.from(a, b => b.toString(16).padStart(2, "0")).join("");
+    } catch (e) {
+      return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+    }
+  }
   let DRAFT_KEY = "";
   let FIXED_REFERRER = "";
   let AGENCY_CODE = "";
@@ -369,6 +383,29 @@
       document.getElementById("clickTimeDisplay").classList.add("show");
       btn.classList.add("clicked");
       btn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
+
+      // クリック時刻をサーバー側にも記録してもらう。
+      // **この画面の時計はお客様の端末のもので、ずれていることがある。**
+      // ASPの記録と突き合わせる唯一のキーなので、ずれるとその成果が結びつかない。
+      // 失敗しても申請は続けられるよう、完全に投げっぱなしにする。
+      try {
+        if (!window._clickId) window._clickId = newClickId();
+        document.getElementById("clickId").value = window._clickId;
+        fetch(GAS_URL, {
+          method: "POST",
+          mode: "no-cors",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "clickPing",
+            clickId: window._clickId,
+            formName: config.formName || "",
+            agencyCode: AGENCY_CODE || "",
+            clientTime: now.toISOString()
+          })
+        }).catch(() => {});
+      } catch (e) { /* 記録できなくても申請は通す */ }
+
       saveDraft(config);
     });
 
@@ -422,6 +459,7 @@
         : raw;
     });
     formData.clickTime      = document.getElementById("clickTime").value;
+    formData.clickId        = document.getElementById("clickId").value;
     formData.submitTime     = new Date().toISOString();
     formData.formName       = config.formName || "";
     formData.screenshot     = await fileToBase64(screenshotFile);
@@ -482,7 +520,8 @@
     const draft = {
       savedAt: Date.now(),
       fields: {},
-      clickTime: document.getElementById("clickTime")?.value || ""
+      clickTime: document.getElementById("clickTime")?.value || "",
+      clickId: document.getElementById("clickId")?.value || ""
     };
     (config.fields || []).forEach(field => {
       const el = document.getElementById(field.id);
@@ -506,6 +545,10 @@
       const value = draft.fields ? draft.fields[field.id] : "";
       if (value != null && value !== "") setFieldValue(field, value);
     });
+    if (draft.clickId) {
+      document.getElementById("clickId").value = draft.clickId;
+      window._clickId = draft.clickId;
+    }
     if (draft.clickTime) {
       const clickInput = document.getElementById("clickTime");
       const display = document.getElementById("clickTimeDisplay");
