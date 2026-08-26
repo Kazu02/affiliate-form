@@ -130,6 +130,36 @@ function agNameMatches_(adName, caseName) {
   return aspNameMatches_(adName, caseName);
 }
 
+// 紹介者名を正規の営業担当名へ寄せる。
+//
+// **生の紹介者名でタブを分けてはいけない。** 2026-08-27 の初回実行で、
+// 「柳澤悠貴」と「柳沢悠貴」が別タブになり、さらに代理店経由の
+// 「松田恵美（岩本拓也）」「池田千鶴(岩本拓也)」「オクノ(岩本拓也)」が
+// それぞれ独立したタブになって、**岩本さんの担当分が4つに割れた**。
+// 顧客名がタブ名になるので、担当者から見ると何のタブか分からない。
+//
+// 既存の repStatusRepAliasMap_() が表記ゆれ（澤/沢・姓のみ）を持っているので使う。
+// 括弧の中に担当者名が入る形（代理店経由）にも対応する。
+// **どれにも当たらなければ生のまま返す。** 名簿外の担当者（萩原愛也など）を黙って消さない。
+function agCanonicalRep_(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const map = repStatusRepAliasMap_();
+  const direct = map[normalizeName(s)];
+  if (direct) return direct;
+  const inParen = /[（(]([^）)]+)[）)]/.exec(s);   // 「◯◯（岩本拓也）」
+  if (inParen) {
+    const hit = map[normalizeName(inParen[1])];
+    if (hit) return hit;
+  }
+  const outside = s.replace(/[（(][^）)]*[）)]/g, "").trim();  // 「岩本拓也（◯◯）」
+  if (outside) {
+    const hit = map[normalizeName(outside)];
+    if (hit) return hit;
+  }
+  return s;
+}
+
 // 履歴の引き継ぎキー。**行番号を使わない。**
 // 行は案件シート側の編集で動くので、行番号で引き継ぐと別の申請の確認結果を持ち込む。
 function agKeyOf_(caseName, customerName, recvMs) {
@@ -626,7 +656,7 @@ function pushSalesApprovalChecks() {
     if (String(r[AGC_LINK - 1] || "") === "リンク切れ疑い") return;
     const chk = String(r[AGC_SALESCHK - 1] || "");
     if (chk && chk !== "未確認") return; // 済みは再依頼しない
-    const rep = String(r[AGC_REF - 1] || "").trim();
+    const rep = agCanonicalRep_(r[AGC_REF - 1]);   // 表記ゆれ・括弧つきを正規名へ寄せる
     if (!rep) { unassigned++; return; }
     if (!byRep[rep]) byRep[rep] = [];
     byRep[rep].push([
@@ -1142,7 +1172,7 @@ function buildApprovalGapSection_() {
       if ((type === "B" || type === "C") &&
           String(r[AGC_LINK - 1] || "") !== "リンク切れ疑い" &&
           (!chk || chk === "未確認")) {
-        const rep = String(r[AGC_REF - 1] || "").trim() || "（担当なし）";
+        const rep = agCanonicalRep_(r[AGC_REF - 1]) || "（担当なし）";
         overdueByRep[rep] = (overdueByRep[rep] || 0) + 1;
       }
       // 依頼したまま14日回答が無い

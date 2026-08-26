@@ -138,7 +138,7 @@ function issueResubmitTokens() {
 function pushResubmitTabs_(rows) {
   const byRep = {};
   rows.forEach(function (r) {
-    const rep = String(r.ref || "").trim() || "（担当なし）";
+    const rep = agCanonicalRep_(r.ref) || "（担当なし）";   // 表記ゆれを正規名へ寄せる
     if (!byRep[rep]) byRep[rep] = [];
     byRep[rep].push([r.caseName, r.name, r.recv, r.url, r.expire, r.state]);
   });
