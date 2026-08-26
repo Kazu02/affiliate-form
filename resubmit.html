@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>スクリーンショットの再送</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: #f5f5f5; color: #333; min-height: 100vh;
+    }
+    .container { max-width: 600px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.3rem; font-weight: 700; margin-bottom: 8px; color: #1a1a1a; }
+    .description { font-size: 0.9rem; color: #666; margin-bottom: 22px; line-height: 1.7; }
+    .card {
+      background: #fff; border-radius: 12px; padding: 20px;
+      margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .meta { display: flex; gap: 10px; padding: 6px 0; font-size: 0.9rem; }
+    .meta dt { color: #888; min-width: 5.5em; flex: none; }
+    .meta dd { font-weight: 600; }
+    .lead { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; }
+    ul.points { margin: 0 0 18px 1.1rem; font-size: 0.9rem; color: #555; line-height: 1.9; }
+    ul.points strong { color: #b45309; }
+    .drop {
+      border: 2px dashed #cbd5e1; border-radius: 10px; padding: 26px 16px;
+      text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
+      background: #fafafa;
+    }
+    .drop:hover { border-color: #4f46e5; background: #f8f7ff; }
+    .drop .big { font-size: 0.95rem; font-weight: 600; color: #4f46e5; }
+    .drop .small { font-size: 0.8rem; color: #888; margin-top: 6px; }
+    input[type="file"] { display: none; }
+    #previewImg {
+      display: none; max-width: 100%; margin-top: 14px;
+      border-radius: 8px; border: 1px solid #e2e8f0;
+    }
+    #previewImg.show { display: block; }
+    button {
+      width: 100%; padding: 15px; border: none; border-radius: 10px;
+      background: #4f46e5; color: #fff; font-size: 1rem; font-weight: 700;
+      font-family: inherit; cursor: pointer; margin-top: 18px;
+    }
+    button:disabled { background: #c7c7d1; cursor: not-allowed; }
+    .banner {
+      display: none; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+      font-size: 0.9rem; line-height: 1.7;
+    }
+    .banner.show { display: block; }
+    .banner.err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .banner.ok  { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+    .hidden { display: none !important; }
+    .overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      align-items: center; justify-content: center; z-index: 10;
+    }
+    .overlay.show { display: flex; }
+    .overlay .box {
+      background: #fff; border-radius: 12px; padding: 26px 32px;
+      font-size: .95rem; font-weight: 600;
+    }
+    .foot { font-size: .78rem; color: #999; margin-top: 20px; line-height: 1.8; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div id="loading" class="card">読み込んでいます…</div>
+
+  <div id="errBanner" class="banner err"></div>
+
+  <div id="main" class="hidden">
+    <h1>スクリーンショットの再送のお願い</h1>
+    <p class="description">
+      お申し込みの確認のため、<strong>申込完了メール（サンクスメール）</strong>の
+      スクリーンショットをもう一度お送りください。
+    </p>
+
+    <div class="card">
+      <dl>
+        <div class="meta"><dt>お申し込み</dt><dd id="mCase">—</dd></div>
+        <div class="meta"><dt>お申込日</dt><dd id="mDate">—</dd></div>
+      </dl>
+    </div>
+
+    <div class="card">
+      <p class="lead">撮影のお願い</p>
+      <ul class="points">
+        <li><strong>メールの受信日時が画面に写るように</strong>撮ってください</li>
+        <li>お客様のメールアドレスが写っていると確実です</li>
+        <li>画面全体が入るように（一部を拡大しすぎないように）</li>
+      </ul>
+
+      <label class="drop" for="file">
+        <div class="big">タップして画像を選ぶ</div>
+        <div class="small">スクリーンショットの写真を選んでください</div>
+      </label>
+      <input type="file" id="file" accept="image/*">
+      <img id="previewImg" alt="選択した画像">
+
+      <button id="send" disabled>この内容で送る</button>
+    </div>
+
+    <p class="foot">
+      このページのURLはお客様専用です。1回だけご利用いただけます。<br>
+      期限: <span id="mExpire">—</span> まで
+    </p>
+  </div>
+
+  <div id="done" class="hidden">
+    <div class="banner ok show">
+      <strong>送信しました。ありがとうございました。</strong><br>
+      担当者が内容を確認いたします。このページは閉じていただいて構いません。
+    </div>
+  </div>
+
+</div>
+
+<div class="overlay" id="sending"><div class="box">送信しています…</div></div>
+
+<script src="config.js"></script>
+<script>
+  const TOKEN = new URLSearchParams(location.search).get("rs") || "";
+  let picked = null;   // dataURL
+  let pickedName = "";
+
+  const REASON = {
+    notfound: "このURLは無効です。お手数ですが担当者へご連絡ください。",
+    used:     "このURLは既にご利用いただいています。再度お送りいただく場合は担当者へご連絡ください。",
+    expired:  "このURLは有効期限が切れています。お手数ですが担当者へご連絡ください。",
+    void:     "このURLは無効になっています。お手数ですが担当者へご連絡ください。"
+  };
+
+  function showError(msg) {
+    document.getElementById("loading").classList.add("hidden");
+    document.getElementById("main").classList.add("hidden");
+    const b = document.getElementById("errBanner");
+    b.textContent = msg;
+    b.classList.add("show");
+  }
+
+  async function load() {
+    if (!TOKEN) { showError(REASON.notfound); return; }
+    try {
+      const res = await fetch(CONFIG.gasUrl + "?rs=" + encodeURIComponent(TOKEN));
+      const j = await res.json();
+      if (!j.ok) { showError(REASON[j.reason] || REASON.notfound); return; }
+      document.getElementById("mCase").textContent = j.caseName || "—";
+      document.getElementById("mDate").textContent = j.appliedAt || "—";
+      document.getElementById("mExpire").textContent = j.expire || "—";
+      document.getElementById("loading").classList.add("hidden");
+      document.getElementById("main").classList.remove("hidden");
+    } catch (err) {
+      showError("読み込みに失敗しました。通信環境をご確認のうえ、再度お試しください。");
+    }
+  }
+
+  document.getElementById("file").addEventListener("change", function () {
+    const f = this.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      picked = e.target.result;
+      pickedName = f.name || "resubmit.png";
+      const img = document.getElementById("previewImg");
+      img.src = picked;
+      img.classList.add("show");
+      document.getElementById("send").disabled = false;
+    };
+    reader.readAsDataURL(f);
+  });
+
+  document.getElementById("send").addEventListener("click", async function () {
+    if (!picked) return;
+    this.disabled = true;
+    document.getElementById("sending").classList.add("show");
+    try {
+      // GAS の /exec は POST に CORS を返さないので no-cors で投げ、
+      // 結果は GET で取り直して確かめる（送りっぱなしにしない）。
+      await fetch(CONFIG.gasUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "resubmit",
+          token: TOKEN,
+          screenshot: picked,
+          screenshotName: pickedName
+        })
+      });
+
+      let ok = false;
+      for (let i = 0; i < 6 && !ok; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          const res = await fetch(CONFIG.gasUrl + "?rs=" + encodeURIComponent(TOKEN));
+          const j = await res.json();
+          if (!j.ok && j.reason === "used") ok = true;   // 使用済み＝受理された
+        } catch (e) { /* 継続 */ }
+      }
+
+      document.getElementById("sending").classList.remove("show");
+      if (ok) {
+        document.getElementById("main").classList.add("hidden");
+        document.getElementById("done").classList.remove("hidden");
+      } else {
+        this.disabled = false;
+        showError("送信できたか確認が取れませんでした。" +
+                  "お手数ですが、もう一度お試しいただくか担当者へご連絡ください。");
+        document.getElementById("main").classList.remove("hidden");
+      }
+    } catch (err) {
+      document.getElementById("sending").classList.remove("show");
+      this.disabled = false;
+      alert("送信に失敗しました。通信環境を確認して再度お試しください。");
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>

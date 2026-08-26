@@ -127,6 +127,14 @@ function doGet(e) {
       return handleAdvertiserAdmin_(e.parameter.action || "preview", e.parameter.months || "",
                                     e.parameter.backup === "1");
     }
+// スクショ再提出ページ。トークンで1件を特定する。
+    // **顧客名は返さない**（URLが漏れたときに誰の何かが分かってしまうため）。
+    if (e && e.parameter && e.parameter.rs) {
+      return ContentService
+        .createTextOutput(JSON.stringify(resubmitPayload_(e.parameter.rs)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
 // 代理店専用リンク集。開くたびに呼ばれるので稼働状況がリアルタイムに反映される。
     if (e && e.parameter && e.parameter.agency_links) {
       return ContentService
@@ -191,6 +199,21 @@ function doPost(e) {
         return _customerLineBridgeResponse(false, 'direct_webhook_disabled');
       }
       return handleLineWebhook(data);
+    }
+
+    // スクショの再提出。トークンが唯一の資格情報なので、期限・使い切り・
+    // 対象行の照合は handleResubmit_ 側でまとめて検証する。
+    if (data.action === "resubmit") {
+      let out;
+      try {
+        out = handleResubmit_(data);
+      } catch (rsErr) {
+        Logger.log("再提出エラー: " + rsErr);
+        out = { result: "error", message: "処理に失敗しました。時間をおいて再度お試しください。" };
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify(out))
+        .setMimeType(ContentService.MimeType.JSON);
     }
 
     // 代理店の新規登録（代理店自身が公開フォームから申し込む）。
@@ -610,6 +633,7 @@ function onOpen() {
     .addItem("承認漏れを棚卸しする", "buildApprovalGapFromMenu")
     .addItem("営業担当へ確認を依頼（SS2へ書き出し）", "pushSalesApprovalChecksFromMenu")
     .addItem("営業の確認結果を取り込む", "pullSalesApprovalChecksFromMenu")
+    .addItem("再提出URLを発行する（要再取得の分）", "issueResubmitFromMenu")
     .addItem("広告主への確認依頼を作る（成果管理SSへ追記）", "pushAdvertiserRequestsFromMenu")
     .addItem("広告主の回答を取り込む", "pullAdvertiserAnswersFromMenu")
     .addItem("承認された分を自社シートへ反映", "applyApprovalGapFromMenu")
