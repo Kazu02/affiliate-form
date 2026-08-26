@@ -1006,6 +1006,59 @@ function applyApprovalGapApproved(dryRun) {
 // ---------------------------------------------------------------
 // Step7: 放置の検出（日次レポートから呼ぶ。fail-closed で本体を止めない）
 // ---------------------------------------------------------------
+
+// 案件単位の確認依頼のうち、出してから afterDays 日たっても回答が無いものを返す。
+// **広告主成果管理SSのタブを直接読む。** 承認漏れ管理 側には行が無いため。
+function caseRequestsAwaiting_(nowMs, afterDays) {
+  const out = [];
+  try {
+    const ss = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+    const sh = ss.getSheetByName(AG_CASE_REQUEST_SHEET);
+    if (!sh) return out;
+    const last = sh.getLastRow();
+    if (last < 3) return out;
+    sh.getRange(3, 1, last - 2, AG_CASE_REQ_HEADERS.length).getValues().forEach(function (r) {
+      const answered = String(r[8] || "").trim();
+      if (answered && answered !== "確認中") return;      // 回答済み
+      const reqMs = agDateToMillis_(r[1]);
+      if (!reqMs) return;
+      const days = agDaysBetween_(reqMs, nowMs);
+      if (days < afterDays) return;
+      out.push({
+        ad: String(r[2] || ""), days: days,
+        count: Number(r[4]) || 0, sum: Number(r[5]) || 0
+      });
+    });
+    out.sort(function (a, b) { return b.days - a.days; });
+  } catch (e) {
+    Logger.log("案件単位の依頼を読めませんでした（日次は続行）: " + e);
+  }
+  return out;
+}
+
+// 依頼の状況をその場で見る（督促の判断用）
+function showCaseRequestStatusFromMenu() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const all = caseRequestsAwaiting_(Date.now(), 0);
+    if (!all.length) {
+      ui.alert("未回答の案件単位の確認依頼はありません。\n\n" +
+               "（すべて回答済みか、まだ依頼を出していません）");
+      return;
+    }
+    let cnt = 0, sum = 0;
+    const lines = all.map(function (c) {
+      cnt += c.count; sum += c.sum;
+      return "  " + c.ad + "\n    " + c.count + "件 / " + c.sum.toLocaleString() +
+             "円 / 依頼から " + c.days + "日";
+    });
+    ui.alert("案件単位の確認依頼（未回答）\n\n" + lines.join("\n") +
+             "\n\n合計 " + all.length + "案件 / " + cnt + "件 / " + sum.toLocaleString() + "円\n\n" +
+             "7日以上たったものは日次レポートにも出ます。");
+  } catch (e) {
+    ui.alert("状況を取得できませんでした。\n\n" + e);
+  }
+}
 function buildApprovalGapSection_() {
   try {
     const ss = getOrCreateSpreadsheet();
@@ -1035,8 +1088,13 @@ function buildApprovalGapSection_() {
           agDaysBetween_(reqDate, nowMs) >= 14) noAnswer++;
     });
 
+    // **案件単位の依頼も見る。** こちらは 承認漏れ管理 に行が無く、
+    // 広告主成果管理SS のタブにしか存在しない。見に行かないと
+    // 「出したまま誰も答えず、誰も気づかない」がそのまま起きる。
+    const cases = caseRequestsAwaiting_(nowMs, 7);
+
     const reps = Object.keys(overdueByRep);
-    if (!reps.length && !noAnswer) return "";
+    if (!reps.length && !noAnswer && !cases.length) return "";
 
     let s = "\n■ 承認漏れの確認";
     if (reps.length) {
@@ -1045,6 +1103,15 @@ function buildApprovalGapSection_() {
                .map(function (r) { return r + " " + overdueByRep[r] + "件"; }).join(" / ");
     }
     if (noAnswer) s += "\n・広告主へ依頼したまま14日以上回答なし: " + noAnswer + "件";
+    if (cases.length) {
+      let sum = 0, cnt = 0;
+      cases.forEach(function (c) { sum += c.sum; cnt += c.count; });
+      s += "\n・案件単位の確認依頼が未回答: " + cases.length + "案件（" + cnt + "件・" +
+           sum.toLocaleString() + "円）";
+      cases.slice(0, 5).forEach(function (c) {
+        s += "\n    " + c.ad + "（依頼から" + c.days + "日）";
+      });
+    }
     return s;
   } catch (e) {
     Logger.log("承認漏れ節の生成に失敗（日次レポートは続行）: " + e);
