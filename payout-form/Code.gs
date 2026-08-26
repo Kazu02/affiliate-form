@@ -72,6 +72,16 @@ const NAME_HEADER_CANDIDATES = ["名前", "顧客名", "お名前", "氏名"];
 // フォームの設問タイトル（onSubmit のマッピングキー）
 const Q_NAME     = "お客様のお名前（フルネーム）";
 const Q_REFERRER = "ご紹介いただいた営業担当者";
+
+// 「その他」を選んだときに自由記述してもらう設問。
+//
+// **プルダウン（ListItem）は Google フォームの「その他」に対応していない。**
+// 対応するのはラジオ（MultipleChoice）とチェックボックスだけ。
+// ラジオに作り替えれば1問で済むが、**項目を作り替えると既存回答のこの設問ぶんが
+// フォーム側から消える**。このフォームは 2026-07-30 に回答の実体を失った経緯があるので、
+// 既存項目には触らず、選択肢に「その他」を足して自由記述を別項目で受ける形にした。
+const REFERRER_OTHER   = "その他";
+const Q_REFERRER_OTHER = "「その他」を選んだ方のみ：ご紹介者のお名前";
 const Q_BANK     = "金融機関名（銀行名）";
 const Q_BRANCH   = "支店名";
 const Q_ACCTTYPE = "預金種目";
@@ -442,10 +452,12 @@ function setup() {
   form.addTextItem().setTitle(Q_NAME)
     .setHelpText("お申し込み時と同じフルネームをご入力ください（例: 山田 太郎）").setRequired(true);
 
-  // Q2 紹介営業担当（選択式）
+  // Q2 紹介営業担当（選択式）＋ Q2-2 その他の自由記述
   form.addListItem().setTitle(Q_REFERRER)
-    .setHelpText("ご紹介いただいた担当者をお選びください")
-    .setChoiceValues(SALESPEOPLE).setRequired(true);
+    .setHelpText("ご紹介いただいた担当者をお選びください（一覧に無い場合は「" +
+                 REFERRER_OTHER + "」）")
+    .setChoiceValues(referrerChoices_()).setRequired(true);
+  ensureReferrerOtherItem_(form, -1);   // 直後に自動で並ぶので位置指定は不要
 
   // Q3 金融機関名
   form.addTextItem().setTitle(Q_BANK).setHelpText("例: 三菱UFJ銀行 / ゆうちょ銀行").setRequired(true);
@@ -511,19 +523,60 @@ function ensureSubmitTrigger_(formId) {
   Logger.log("onSubmit トリガーを登録しました");
 }
 
-// 「紹介営業担当」リスト項目の選択肢を名簿(SALESPEOPLE)へ同期する（既存フォームの更新用）。
+// 紹介営業担当の選択肢に使う値。名簿の末尾に「その他」を足したもの。
+// **「その他」は必ず最後**（名簿の途中に紛れると選びにくい）。
+function referrerChoices_() {
+  return SALESPEOPLE.concat([REFERRER_OTHER]);
+}
+
+// 「紹介営業担当」リスト項目の選択肢を名簿(SALESPEOPLE)＋「その他」へ同期する。
+// あわせて、自由記述の設問が無ければ紹介営業担当の直後に足す（冪等）。
 // メンバー増減後に setup() を再実行すると、この関数で選択肢が最新化される。
 function syncFormChoices_(form) {
   var items = form.getItems(FormApp.ItemType.LIST);
+  var refIndex = -1;
+  var synced = false;
   for (var i = 0; i < items.length; i++) {
     if (items[i].getTitle().trim() === Q_REFERRER) {
-      items[i].asListItem().setChoiceValues(SALESPEOPLE);
-      Logger.log("紹介営業担当の選択肢を同期: " + SALESPEOPLE.join(", "));
-      return true;
+      items[i].asListItem().setChoiceValues(referrerChoices_());
+      refIndex = items[i].getIndex();
+      synced = true;
+      Logger.log("紹介営業担当の選択肢を同期: " + referrerChoices_().join(", "));
+      break;
     }
   }
-  Logger.log("紹介営業担当のリスト項目が見つかりませんでした");
-  return false;
+  if (!synced) Logger.log("紹介営業担当のリスト項目が見つかりませんでした");
+
+  ensureReferrerOtherItem_(form, refIndex);
+  return synced;
+}
+
+// 自由記述の設問を用意する。**既にあれば何もしない**（setup() は何度でも回るため）。
+// afterIndex が有効なら、その直後へ移す（離れていると書き忘れる）。
+function ensureReferrerOtherItem_(form, afterIndex) {
+  var all = form.getItems();
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].getTitle().trim() === Q_REFERRER_OTHER) return false; // 既にある
+  }
+  var item = form.addTextItem()
+    .setTitle(Q_REFERRER_OTHER)
+    .setHelpText("上で「" + REFERRER_OTHER + "」を選んだ場合のみ、ご紹介者のお名前をご記入ください。" +
+                 "担当者名を選ばれた方は空欄で構いません。")
+    .setRequired(false);   // **必須にしない。** 大多数は担当者を選ぶので、必須だと全員が詰まる
+  if (afterIndex >= 0) item.setIndex(afterIndex + 1);
+  Logger.log("自由記述の設問を追加: " + Q_REFERRER_OTHER);
+  return true;
+}
+
+// 回答から紹介者を決める。「その他」なら自由記述の値を採る。
+// **onSubmit と reapplyAllFormResponses の両方から呼ぶ。** 片方だけに書くと、
+// 復旧時にだけ紹介者が「その他」のまま入る（照合できず未照合ログ行きになる）。
+function resolveReferrer_(answers) {
+  var picked = String(answers[Q_REFERRER] || "").trim();
+  var free   = String(answers[Q_REFERRER_OTHER] || "").trim();
+  if (picked === REFERRER_OTHER) return free;      // 空でも「その他」は返さない（照合の邪魔になる）
+  if (!picked && free) return free;                // 選択が空で自由記述だけある場合も拾う
+  return picked;
 }
 
 // ===== フォーム送信ハンドラ =====
@@ -535,7 +588,7 @@ function onSubmit(e) {
       answers[items[i].getItem().getTitle().trim()] = String(items[i].getResponse() || "").trim();
     }
     var fullName = answers[Q_NAME] || "";
-    var referrer = answers[Q_REFERRER] || "";
+    var referrer = resolveReferrer_(answers);   // 「その他」なら自由記述の値
     var payout = [
       answers[Q_BANK] || "",
       answers[Q_BRANCH] || "",
@@ -805,7 +858,8 @@ function reapplyAllFormResponses(dryRun) {
     list.push({
       at: at,
       fullName: answers[Q_NAME] || "",
-      referrer: answers[Q_REFERRER] || "",
+      referrer: resolveReferrer_(answers),   // 「その他」なら自由記述の値
+
       payout: [
         answers[Q_BANK] || "", answers[Q_BRANCH] || "", answers[Q_ACCTTYPE] || "",
         answers[Q_ACCTNUM] || "", answers[Q_HOLDER] || "", formatTimestamp_(at)
