@@ -156,6 +156,14 @@
     animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .more {
+    display: block; width: 100%; margin: 4px 0 12px; padding: 15px 12px;
+    font-size: .95rem; font-weight: 700; font-family: inherit; cursor: pointer;
+    background: #fff; color: #4f46e5; border: 1px solid #c7d2fe; border-radius: 10px;
+  }
+  .listnote {
+    font-size: .78rem; color: #64748b; margin: 0 0 10px; text-align: center;
+  }
   .empty {
     background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
     padding: 30px 20px; text-align: center; color: #64748b; font-size: .9rem;
@@ -234,6 +242,11 @@
   var TOKEN = (new URLSearchParams(window.location.search).get("k") || "").trim();
   var DATA = null;
   var filter = "すべて";
+
+  // 一度に出す件数。**全部出すと縦に長くなりすぎて使えない**
+  // （実データで69件＝スマホ58画面分あった）。少しずつ足していく。
+  var CHECK_STEP = 10, CUST_STEP = 20;
+  var checkShown = 0, custShown = 0, custList = [];
 
   // 確認するところ。事務・スプレッドシート側の案内と同じ5点にそろえてある。
   var CHECKPOINTS = [
@@ -336,6 +349,7 @@
   function renderChecks() {
     var list = document.getElementById("checkList");
     list.innerHTML = "";
+    checkShown = 0;
 
     if (!DATA.checks || !DATA.checks.length) {
       var ok = el("div", "empty");
@@ -345,7 +359,32 @@
       return;
     }
 
-    DATA.checks.forEach(function (c) { list.appendChild(checkCard(c)); });
+    if (DATA.checks.length > CHECK_STEP) {
+      list.appendChild(el("div", "listnote",
+        "全部で " + DATA.checks.length + " 件あります。お待たせしている順に並べています。" +
+        "一度に全部やらなくて大丈夫です。"));
+    }
+    appendChecks();
+  }
+
+  // 続きを足す。**作り直さない**（答え済みの「送信しました」が消えてしまうため）。
+  function appendChecks() {
+    var list = document.getElementById("checkList");
+    var old = document.getElementById("checkMore");
+    if (old) old.parentNode.removeChild(old);
+
+    var end = Math.min(checkShown + CHECK_STEP, DATA.checks.length);
+    for (var i = checkShown; i < end; i++) list.appendChild(checkCard(DATA.checks[i]));
+    checkShown = end;
+
+    var rest = DATA.checks.length - checkShown;
+    if (rest > 0) {
+      var b = el("button", "more", "つづきを見る（あと " + rest + " 件）");
+      b.type = "button";
+      b.id = "checkMore";
+      b.addEventListener("click", appendChecks);
+      list.appendChild(b);
+    }
   }
 
   function checkCard(c) {
@@ -468,21 +507,46 @@
   function renderCustomers() {
     var list = document.getElementById("custList");
     list.innerHTML = "";
+    custShown = 0;
     var word = (document.getElementById("q").value || "").trim();
 
-    var shown = (DATA.customers || []).filter(function (c) {
+    custList = (DATA.customers || []).filter(function (c) {
       if (word && c.name.indexOf(word) < 0) return false;
       return c.cases.some(matchFilter);
     });
 
-    if (!shown.length) {
+    if (!custList.length) {
       list.appendChild(el("div", "empty",
         word ? "「" + word + "」に当てはまるお客様は見つかりませんでした。"
              : "表示できるお客様がいません。"));
       return;
     }
 
-    shown.forEach(function (c) { list.appendChild(custCard(c)); });
+    if (custList.length > CUST_STEP) {
+      list.appendChild(el("div", "listnote",
+        custList.length + " 人います。新しいお客様から順に出しています。" +
+        "お探しの方がいるときは、上の欄にお名前を入れてください。"));
+    }
+    appendCustomers();
+  }
+
+  function appendCustomers() {
+    var list = document.getElementById("custList");
+    var old = document.getElementById("custMore");
+    if (old) old.parentNode.removeChild(old);
+
+    var end = Math.min(custShown + CUST_STEP, custList.length);
+    for (var i = custShown; i < end; i++) list.appendChild(custCard(custList[i]));
+    custShown = end;
+
+    var rest = custList.length - custShown;
+    if (rest > 0) {
+      var b = el("button", "more", "つづきを見る（あと " + rest + " 人）");
+      b.type = "button";
+      b.id = "custMore";
+      b.addEventListener("click", appendCustomers);
+      list.appendChild(b);
+    }
   }
 
   function custCard(c) {
