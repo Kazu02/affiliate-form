@@ -142,6 +142,14 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    // 営業ダッシュボード（sales.html）。営業ひとりに1本のURLで、
+    // 合言葉が身元確認そのものなので、**他人の担当分は返さない**（SalesDashboard.gs 参照）。
+    if (e && e.parameter && e.parameter.sales) {
+      return ContentService
+        .createTextOutput(JSON.stringify(salesDashboardPayload_(e.parameter.sales)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const ss       = getOrCreateSpreadsheet();
     const formName = (e && e.parameter && e.parameter.form) ? e.parameter.form : getFirstFormCode(ss);
     const config   = readConfig(ss, formName);
@@ -222,6 +230,21 @@ function doPost(e) {
       } catch (rsErr) {
         Logger.log("再提出エラー: " + rsErr);
         out = { result: "error", message: "処理に失敗しました。時間をおいて再度お試しください。" };
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify(out))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 営業ダッシュボードからの書き込み（承認確認の3択・顧客メモ）。
+    // 合言葉で本人を確かめ、自分の担当行だけを書き換える（SalesDashboard.gs 参照）。
+    if (data.action === "salesCheck" || data.action === "salesMemo") {
+      let out;
+      try {
+        out = data.action === "salesCheck" ? handleSalesCheck_(data) : handleSalesMemo_(data);
+      } catch (sdErr) {
+        Logger.log("営業ダッシュボード エラー: " + sdErr);
+        out = { result: "error", message: "保存できませんでした。時間をおいて再度お試しください。" };
       }
       return ContentService
         .createTextOutput(JSON.stringify(out))
@@ -645,6 +668,7 @@ function onOpen() {
     .addSeparator()
     .addItem("ASP獲得ログCSVをDriveから取り込む", "importAspLogFromDriveFromMenu")
     .addItem("承認漏れを棚卸しする", "buildApprovalGapFromMenu")
+    .addItem("営業ダッシュボードのURLを見る／発行する", "showSalesDashboardUrls")
     .addItem("営業担当へ確認を依頼（SS2へ書き出し）", "pushSalesApprovalChecksFromMenu")
     .addItem("営業の確認結果を取り込む", "pullSalesApprovalChecksFromMenu")
     .addItem("再提出URLを発行する（要再取得の分）", "issueResubmitFromMenu")

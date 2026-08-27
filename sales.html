@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>営業ダッシュボード</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: #f1f5f9; color: #0f172a; line-height: 1.75;
+    padding: 18px 14px 70px; -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 680px; margin: 0 auto; }
+
+  .head { margin-bottom: 16px; }
+  .head h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: .02em; }
+  .head .who { margin-top: 4px; font-size: 1rem; color: #334155; font-weight: 600; }
+
+  /* ---- 数字 ---- */
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .stat {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;
+  }
+  .stat.alert { border-color: #fca5a5; background: #fef2f2; }
+  .stat .num { font-size: 1.7rem; font-weight: 700; color: #4f46e5; line-height: 1.2; }
+  .stat.alert .num { color: #b91c1c; }
+  .stat .num .unit { font-size: .9rem; font-weight: 600; margin-left: 3px; }
+  .stat .lbl { font-size: .85rem; font-weight: 700; margin-top: 2px; }
+  .stat .sub { font-size: .72rem; color: #64748b; line-height: 1.6; margin-top: 3px; }
+
+  /* ---- タブ ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab {
+    flex: 1 1 0; padding: 13px 6px; font-size: .92rem; font-weight: 700; font-family: inherit;
+    background: #fff; color: #475569; border: 1px solid #cbd5e1; border-radius: 10px; cursor: pointer;
+  }
+  .tab.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+  .tab .badge {
+    display: inline-block; margin-left: 6px; background: #dc2626; color: #fff;
+    border-radius: 999px; padding: 1px 8px; font-size: .78rem;
+  }
+  .tab.active .badge { background: #fff; color: #4f46e5; }
+
+  /* ---- 説明 ---- */
+  .guide {
+    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px;
+    padding: 13px 15px; font-size: .84rem; color: #1e3a8a; margin-bottom: 14px;
+  }
+  .guide b { font-weight: 700; }
+  .guide ol { margin: 8px 0 0 1.2em; }
+  .guide li { margin-bottom: 3px; }
+
+  /* ---- カード ---- */
+  .card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 15px 16px; margin-bottom: 12px;
+  }
+  .card .case { font-size: 1rem; font-weight: 700; margin-bottom: 2px; }
+  .card .cust { font-size: .95rem; color: #334155; }
+  .card .meta { font-size: .78rem; color: #64748b; margin-top: 4px; }
+  .card .meta .late { color: #b91c1c; font-weight: 700; }
+  .card .via {
+    display: inline-block; margin-top: 6px; font-size: .72rem; color: #475569;
+    background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px; padding: 2px 9px;
+  }
+
+  .shot { margin: 13px 0 4px; }
+  .shot a {
+    display: block; text-align: center; padding: 12px; border-radius: 8px;
+    background: #0f172a; color: #fff; text-decoration: none; font-weight: 700; font-size: .92rem;
+  }
+  .shot .broken {
+    background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
+    border-radius: 8px; padding: 11px 13px; font-size: .82rem;
+  }
+
+  .qlist { margin: 12px 0 4px; font-size: .82rem; color: #334155; }
+  .qlist .t { font-weight: 700; margin-bottom: 4px; }
+  .qlist ol { margin-left: 1.2em; }
+
+  .answers { display: grid; gap: 8px; margin-top: 12px; }
+  .ans {
+    padding: 14px 12px; border-radius: 9px; font-size: .92rem; font-weight: 700;
+    font-family: inherit; cursor: pointer; border: 1px solid transparent; text-align: left;
+  }
+  .ans .desc { display: block; font-weight: 400; font-size: .76rem; margin-top: 2px; opacity: .9; }
+  .ans-ok   { background: #16a34a; color: #fff; }
+  .ans-redo { background: #fff; color: #b45309; border-color: #fcd34d; }
+  .ans-drop { background: #fff; color: #475569; border-color: #cbd5e1; }
+  .ans:disabled { opacity: .5; cursor: default; }
+
+  textarea {
+    width: 100%; margin-top: 10px; padding: 10px 11px; font-size: .92rem; font-family: inherit;
+    border: 1px solid #cbd5e1; border-radius: 8px; color: #0f172a; resize: vertical; line-height: 1.6;
+  }
+  textarea:focus, input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+  .cmtlabel { display: block; margin-top: 12px; font-size: .8rem; font-weight: 700; color: #334155; }
+  .cmthint { font-size: .74rem; color: #94a3b8; font-weight: 400; }
+
+  .sent {
+    background: #f0fdf4; border: 1px solid #86efac; color: #166534;
+    border-radius: 8px; padding: 13px 15px; font-size: .88rem; font-weight: 600;
+  }
+  .cardmsg {
+    margin-top: 10px; font-size: .82rem; border-radius: 8px; padding: 10px 12px;
+    background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
+  }
+
+  /* ---- お客様一覧 ---- */
+  .search { margin-bottom: 10px; }
+  .search input {
+    width: 100%; padding: 12px 13px; font-size: 1rem; font-family: inherit;
+    border: 1px solid #cbd5e1; border-radius: 9px; background: #fff;
+  }
+  .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
+  .chip {
+    padding: 8px 14px; font-size: .83rem; font-weight: 700; font-family: inherit;
+    background: #fff; color: #475569; border: 1px solid #cbd5e1; border-radius: 999px; cursor: pointer;
+  }
+  .chip.on { background: #334155; color: #fff; border-color: #334155; }
+
+  .cust-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .cust-head .nm { font-size: 1.02rem; font-weight: 700; }
+  .cust-head .last { font-size: .74rem; color: #94a3b8; white-space: nowrap; }
+
+  .case-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 9px 0; border-top: 1px solid #f1f5f9;
+  }
+  .case-row .cn { font-size: .87rem; }
+  .case-row .cd { font-size: .72rem; color: #94a3b8; }
+  .badge2 {
+    flex: 0 0 auto; font-size: .75rem; font-weight: 700; border-radius: 999px;
+    padding: 4px 11px; white-space: nowrap;
+  }
+  .b-wait { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+  .b-ok   { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+  .b-ng   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+
+  .memo { margin-top: 12px; }
+  .memo .save {
+    margin-top: 8px; padding: 10px 18px; font-size: .85rem; font-weight: 700; font-family: inherit;
+    background: #4f46e5; color: #fff; border: none; border-radius: 8px; cursor: pointer;
+  }
+  .memo .save.done { background: #16a34a; }
+  .memo .save:disabled { opacity: .5; cursor: default; }
+
+  /* ---- 状態 ---- */
+  .state { text-align: center; padding: 46px 20px; color: #64748b; font-size: .94rem; }
+  .state.error { color: #991b1b; }
+  .spinner {
+    width: 30px; height: 30px; margin: 0 auto 14px;
+    border: 3px solid #e2e8f0; border-top-color: #4f46e5; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 30px 20px; text-align: center; color: #64748b; font-size: .9rem;
+  }
+  .foot { margin-top: 22px; font-size: .76rem; color: #94a3b8; text-align: center; line-height: 1.9; }
+  .foot button {
+    margin-top: 8px; padding: 9px 20px; font-size: .82rem; font-family: inherit; font-weight: 700;
+    background: #fff; color: #475569; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer;
+  }
+  .hidden { display: none; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="loading" class="state">
+    <div class="spinner"></div>
+    <div>読み込んでいます...</div>
+  </div>
+
+  <div id="errorState" class="state error hidden"></div>
+
+  <div id="content" class="hidden">
+    <div class="head">
+      <h1>営業ダッシュボード</h1>
+      <div class="who" id="who"></div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="tabs">
+      <button type="button" class="tab active" id="tabCheck">確認のお願い<span class="badge hidden" id="tabBadge"></span></button>
+      <button type="button" class="tab" id="tabCust">お客様一覧</button>
+    </div>
+
+    <section id="paneCheck">
+      <div class="guide">
+        <b>スクショが証拠として通るかを見ていただくところです。</b><br>
+        下の申込は、広告主（案件の会社）側で「成果」として記録が見つかっていません。
+        お客様が送ってくださったスクショが証拠として通れば、あらためて承認をお願いできます。
+        <b>1件ずつ、スクショを開いて3つのボタンのどれかを押してください。</b>
+        押した内容はそのまま事務へ届きます。
+      </div>
+      <div id="checkList"></div>
+    </section>
+
+    <section id="paneCust" class="hidden">
+      <div class="guide">
+        <b>ご自身が紹介したお客様の一覧です。</b><br>
+        お客様ごとに、どの案件へ申し込んでいて、いまどうなっているかが並びます。
+        気づいたことはメモに残せます（メモはご自身と事務だけが見ます）。
+      </div>
+      <div class="search">
+        <label class="sr" for="q">お名前で探す</label>
+        <input type="text" id="q" placeholder="お名前で探す（例: 山田）" autocomplete="off">
+      </div>
+      <div class="chips" id="chips"></div>
+      <div id="custList"></div>
+    </section>
+
+    <div class="foot">
+      最終更新: <span id="updatedAt"></span><br>
+      このページはブックマークしてお使いください。開くたびに最新になります。<br>
+      <button type="button" id="reload">最新の状態にする</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN = (new URLSearchParams(window.location.search).get("k") || "").trim();
+  var DATA = null;
+  var filter = "すべて";
+
+  // 確認するところ。事務・スプレッドシート側の案内と同じ5点にそろえてある。
+  var CHECKPOINTS = [
+    "その案件の「申込完了」メールのスクショですか",
+    "申し込んだ日時が写っていますか",
+    "お客様のメールアドレスが写っていますか",
+    "お名前が申込と同じですか",
+    "「仮登録」で止まっていませんか"
+  ];
+
+  var ANSWERS = [
+    { v: "OK",       cls: "ans-ok",   label: "このスクショで問題ありません",
+      desc: "証拠として通ると思う場合。事務が広告主へ確認を出します。",
+      confirm: "「このスクショで問題ありません」で送ります。よろしいですか。" },
+    { v: "要再取得", cls: "ans-redo", label: "スクショを撮り直してもらう",
+      desc: "写り方が足りない場合。お客様へ撮り直しのご案内が出せます。",
+      confirm: "「スクショを撮り直してもらう」で送ります。よろしいですか。" },
+    { v: "取下げ",   cls: "ans-drop", label: "この申込は取り下げる",
+      desc: "そもそも申し込めていない・お客様が取りやめた場合。",
+      confirm: "「この申込は取り下げる」で送ります。よろしいですか。" }
+  ];
+
+  var uidN = 0;
+  function nextId(prefix) { return prefix + "_" + (++uidN); }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+  function show(id) { document.getElementById(id).classList.remove("hidden"); }
+  function hide(id) { document.getElementById(id).classList.add("hidden"); }
+
+  function fail(msg) {
+    hide("loading");
+    hide("content");
+    var e = document.getElementById("errorState");
+    e.textContent = msg;
+    show("errorState");
+  }
+
+  // ---- 送信（GAS へ POST。text/plain にして CORS のプリフライトを避ける） ----
+  function post(body, onOk, onErr) {
+    fetch(CONFIG.gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(body)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || d.result !== "ok") {
+          onErr((d && d.message) || "保存できませんでした。時間をおいて再度お試しください。");
+          return;
+        }
+        onOk(d);
+      })
+      .catch(function () {
+        onErr("通信できませんでした。電波の良いところで、もう一度お試しください。");
+      });
+  }
+
+  // ---- 数字 ----
+  function renderStats() {
+    var s = DATA.summary || {};
+    var box = document.getElementById("stats");
+    box.innerHTML = "";
+
+    var tiles = [
+      { n: s.needCheck, unit: "件", lbl: "確認のお願い",
+        sub: "あなたに見ていただきたいスクショの数です。", alert: s.needCheck > 0 },
+      { n: s.waiting, unit: "件", lbl: "結果を待っています",
+        sub: "申込は済んでいて、承認されるか未確定のものです。" },
+      { n: s.appliedMonth, unit: "件", lbl: "今月の申込",
+        sub: "今月ご紹介いただいた件数です。" },
+      { n: s.approvedMonth, unit: "件", lbl: "今月の承認",
+        sub: "そのうち承認された件数です。" }
+    ];
+
+    tiles.forEach(function (t) {
+      var d = el("div", t.alert ? "stat alert" : "stat");
+      var num = el("div", "num", String(typeof t.n === "number" ? t.n : 0));
+      num.appendChild(el("span", "unit", t.unit));
+      d.appendChild(num);
+      d.appendChild(el("div", "lbl", t.lbl));
+      d.appendChild(el("div", "sub", t.sub));
+      box.appendChild(d);
+    });
+
+    var badge = document.getElementById("tabBadge");
+    if (s.needCheck > 0) {
+      badge.textContent = String(s.needCheck);
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+  }
+
+  // ---- 確認のお願い ----
+  function renderChecks() {
+    var list = document.getElementById("checkList");
+    list.innerHTML = "";
+
+    if (!DATA.checks || !DATA.checks.length) {
+      var ok = el("div", "empty");
+      ok.appendChild(el("div", null, "確認をお願いしたいものはありません。"));
+      ok.appendChild(el("div", null, "ありがとうございます。新しく出てきたら、ここに並びます。"));
+      list.appendChild(ok);
+      return;
+    }
+
+    DATA.checks.forEach(function (c) { list.appendChild(checkCard(c)); });
+  }
+
+  function checkCard(c) {
+    var card = el("div", "card");
+
+    card.appendChild(el("div", "case", c.caseName));
+    card.appendChild(el("div", "cust", c.customerName + " 様"));
+
+    var meta = el("div", "meta");
+    meta.appendChild(document.createTextNode("申込日 " + String(c.recvAt || "").substring(0, 10)));
+    if (c.days) {
+      meta.appendChild(document.createTextNode(" / "));
+      var d = el("span", c.days >= 30 ? "late" : null, c.days + "日たっています");
+      meta.appendChild(d);
+    }
+    if (c.reward) {
+      meta.appendChild(document.createTextNode(" / 報酬 " + Number(c.reward).toLocaleString() + "円"));
+    }
+    card.appendChild(meta);
+
+    if (c.agencyName) card.appendChild(el("div", "via", "代理店: " + c.agencyName));
+
+    // スクショ
+    var shot = el("div", "shot");
+    if (c.shotUrl) {
+      var a = el("a", null, "スクショを開いて確認する");
+      a.href = c.shotUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      shot.appendChild(a);
+    } else {
+      shot.appendChild(el("div", "broken",
+        "スクショが保存できておらず、開けません。お手数ですが「スクショを撮り直してもらう」を選び、" +
+        "下の欄に状況を書いてください。"));
+    }
+    card.appendChild(shot);
+
+    // 見るところ
+    var q = el("div", "qlist");
+    q.appendChild(el("div", "t", "スクショのここを見てください"));
+    var ol = el("ol");
+    CHECKPOINTS.forEach(function (t) { ol.appendChild(el("li", null, t)); });
+    q.appendChild(ol);
+    card.appendChild(q);
+
+    // コメント
+    var lab = el("label", "cmtlabel", "気づいたこと ");
+    lab.appendChild(el("span", "cmthint", "（書かなくても送れます）"));
+    card.appendChild(lab);
+    var ta = el("textarea");
+    ta.rows = 2;
+    ta.id = nextId("cmt");
+    lab.htmlFor = ta.id;
+    ta.placeholder = "例: お客様に確認したところ、申込は完了しているとのことでした";
+    card.appendChild(ta);
+
+    // 3択
+    var msg = el("div", "cardmsg hidden");
+    var wrap = el("div", "answers");
+    var btns = [];
+    ANSWERS.forEach(function (a) {
+      var b = el("button", "ans " + a.cls, a.label);
+      b.type = "button";
+      b.appendChild(el("span", "desc", a.desc));
+      b.addEventListener("click", function () {
+        if (!window.confirm(a.confirm)) return;
+        btns.forEach(function (x) { x.disabled = true; });
+        msg.classList.add("hidden");
+        b.textContent = "送信中...";
+        post(
+          { action: "salesCheck", token: TOKEN, key: c.key, answer: a.v, comment: ta.value },
+          function () {
+            card.innerHTML = "";
+            var done = el("div", "sent",
+              c.caseName + " / " + c.customerName + " 様 … 「" + a.label + "」で送信しました。ありがとうございます。");
+            card.appendChild(done);
+            DATA.summary.needCheck = Math.max(0, (DATA.summary.needCheck || 1) - 1);
+            renderStats();
+          },
+          function (m) {
+            btns.forEach(function (x) { x.disabled = false; });
+            b.textContent = a.label;
+            b.appendChild(el("span", "desc", a.desc));
+            msg.textContent = m;
+            msg.classList.remove("hidden");
+          }
+        );
+      });
+      btns.push(b);
+      wrap.appendChild(b);
+    });
+    card.appendChild(wrap);
+    card.appendChild(msg);
+
+    return card;
+  }
+
+  // ---- お客様一覧 ----
+  function renderChips() {
+    var box = document.getElementById("chips");
+    box.innerHTML = "";
+    ["すべて", "結果待ち", "承認", "非承認"].forEach(function (name) {
+      var b = el("button", "chip" + (filter === name ? " on" : ""), name);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        filter = name;
+        renderChips();
+        renderCustomers();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function matchFilter(k) {
+    if (filter === "すべて") return true;
+    if (filter === "結果待ち") return k.status === "確認中";
+    return k.status === filter;
+  }
+
+  function renderCustomers() {
+    var list = document.getElementById("custList");
+    list.innerHTML = "";
+    var word = (document.getElementById("q").value || "").trim();
+
+    var shown = (DATA.customers || []).filter(function (c) {
+      if (word && c.name.indexOf(word) < 0) return false;
+      return c.cases.some(matchFilter);
+    });
+
+    if (!shown.length) {
+      list.appendChild(el("div", "empty",
+        word ? "「" + word + "」に当てはまるお客様は見つかりませんでした。"
+             : "表示できるお客様がいません。"));
+      return;
+    }
+
+    shown.forEach(function (c) { list.appendChild(custCard(c)); });
+  }
+
+  function custCard(c) {
+    var card = el("div", "card");
+
+    var head = el("div", "cust-head");
+    head.appendChild(el("div", "nm", c.name + " 様"));
+    head.appendChild(el("div", "last", "最新 " + String(c.lastRecvAt || "").substring(0, 10)));
+    card.appendChild(head);
+
+    c.cases.filter(matchFilter).forEach(function (k) {
+      var row = el("div", "case-row");
+      var left = el("div");
+      left.appendChild(el("div", "cn", k.caseName));
+      var sub = String(k.recvAt || "").substring(0, 10) + (k.agencyName ? " / 代理店: " + k.agencyName : "");
+      left.appendChild(el("div", "cd", sub));
+      row.appendChild(left);
+
+      var cls = k.status === "承認" ? "b-ok" : (k.status === "非承認" ? "b-ng" : "b-wait");
+      var text = k.status === "承認" ? "承認されました"
+               : (k.status === "非承認" ? "承認されませんでした" : "結果を待っています");
+      row.appendChild(el("div", "badge2 " + cls, text));
+      card.appendChild(row);
+    });
+
+    // メモ
+    var memo = el("div", "memo");
+    var lab = el("label", "cmtlabel", "このお客様のメモ ");
+    lab.appendChild(el("span", "cmthint", "（自由に書けます）"));
+    memo.appendChild(lab);
+    var ta = el("textarea");
+    ta.rows = 2;
+    ta.id = nextId("memo");
+    lab.htmlFor = ta.id;
+    ta.value = c.memo || "";
+    ta.placeholder = "例: 8/30に再度ご連絡する";
+    memo.appendChild(ta);
+
+    var msg = el("div", "cardmsg hidden");
+    var save = el("button", "save", "メモを保存");
+    save.type = "button";
+    save.addEventListener("click", function () {
+      save.disabled = true;
+      save.textContent = "保存中...";
+      msg.classList.add("hidden");
+      post(
+        { action: "salesMemo", token: TOKEN, customer: c.name, memo: ta.value },
+        function () {
+          c.memo = ta.value;
+          save.textContent = "保存しました";
+          save.classList.add("done");
+          setTimeout(function () {
+            save.textContent = "メモを保存";
+            save.classList.remove("done");
+            save.disabled = false;
+          }, 1600);
+        },
+        function (m) {
+          save.disabled = false;
+          save.textContent = "メモを保存";
+          msg.textContent = m;
+          msg.classList.remove("hidden");
+        }
+      );
+    });
+    memo.appendChild(save);
+    memo.appendChild(msg);
+    card.appendChild(memo);
+
+    return card;
+  }
+
+  // ---- タブ ----
+  function setTab(which) {
+    var tc = document.getElementById("tabCheck"), tu = document.getElementById("tabCust");
+    if (which === "check") {
+      tc.classList.add("active"); tu.classList.remove("active");
+      show("paneCheck"); hide("paneCust");
+    } else {
+      tu.classList.add("active"); tc.classList.remove("active");
+      show("paneCust"); hide("paneCheck");
+    }
+    window.scrollTo(0, 0);
+  }
+
+  function render(d) {
+    DATA = d;
+    document.getElementById("who").textContent = d.repName + " さん";
+    document.getElementById("updatedAt").textContent = d.updatedAt || "";
+    renderStats();
+    renderChecks();
+    renderChips();
+    renderCustomers();
+    hide("loading");
+    show("content");
+    // 確認のお願いが無ければ、開いた時点でお客様一覧を見せる。
+    setTab((d.summary && d.summary.needCheck > 0) ? "check" : "cust");
+  }
+
+  function load() {
+    hide("content");
+    hide("errorState");
+    show("loading");
+    fetch(CONFIG.gasUrl + "?sales=" + encodeURIComponent(TOKEN), { method: "GET" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || d.error) { fail((d && d.error) || "開けませんでした。"); return; }
+        render(d);
+      })
+      .catch(function () {
+        fail("読み込みに失敗しました。電波の良いところで、もう一度お試しください。");
+      });
+  }
+
+  function init() {
+    if (typeof CONFIG === "undefined" || !CONFIG.gasUrl) {
+      fail("設定を読み込めませんでした。時間をおいて開き直してください。");
+      return;
+    }
+    if (!TOKEN) {
+      fail("URLが正しくありません。担当者からお送りしたURLをそのまま開いてください。");
+      return;
+    }
+    document.getElementById("tabCheck").addEventListener("click", function () { setTab("check"); });
+    document.getElementById("tabCust").addEventListener("click", function () { setTab("cust"); });
+    document.getElementById("q").addEventListener("input", renderCustomers);
+    document.getElementById("reload").addEventListener("click", load);
+    load();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
