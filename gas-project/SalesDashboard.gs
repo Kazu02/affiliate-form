@@ -85,11 +85,11 @@ function sdReadReps_() {
 function sdFindByToken_(token) {
   const key = String(token || "").trim();
   if (key.length < 16) return null;
-  const list = sdReadReps_();
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].token && list[i].token === key) return list[i];
-  }
-  return null;
+  const hits = sdReadReps_().filter(function (r) { return r.token && r.token === key; });
+  // **同じ合言葉が2行にあると誰なのか決まらない。** 先頭を採ると、後の行の人のURLで
+  // 先頭の人の顧客が見えてしまう。決まらないときは通さない（人が直すまで開けない）。
+  if (hits.length !== 1) return null;
+  return hits[0];
 }
 
 // 名簿（JISHA_REFERRER_OPTIONS）の全員ぶんの行・合言葉・URLを揃える。
@@ -113,9 +113,11 @@ function syncSalesDashboard() {
       added++;
       return;
     }
-    // 途中で合言葉や状態が欠けた行を埋め直す（URLは合言葉から必ず導ける）
+    // 途中で合言葉や状態が欠けた行を埋め直す（URLは合言葉から必ず導ける）。
+    // **16文字未満は身元確認で弾かれる**ので、空と同じく作り直す
+    // （そのままだと「URLはあるのに開けない」が続く）。
     let token = cur.token;
-    if (!token) {
+    if (!token || token.length < 16) {
       token = Utilities.getUuid().replace(/-/g, "");
       sh.getRange(cur.row, SDC_TOKEN).setValue(token);
       sh.getRange(cur.row, SDC_ISSUED).setValue(formatJST(new Date()));
@@ -127,7 +129,21 @@ function syncSalesDashboard() {
   });
 
   SpreadsheetApp.flush();
-  return { added: added, fixed: fixed, total: sdReadReps_().length };
+
+  // 同じ合言葉が2行以上にあると、その合言葉のURLは（安全側に倒して）開けなくなる。
+  // 手でシートを編集したときにしか起きないが、起きたら気付けるようにする。
+  const after = sdReadReps_();
+  const seen = {}, dup = {};
+  after.forEach(function (r) {
+    if (!r.token) return;
+    if (seen[r.token]) dup[r.token] = true;
+    seen[r.token] = true;
+  });
+  const dupNames = after
+    .filter(function (r) { return r.token && dup[r.token]; })
+    .map(function (r) { return r.name; });
+
+  return { added: added, fixed: fixed, total: after.length, duplicated: dupNames };
 }
 
 function sdUrlFor_(token) {
@@ -139,12 +155,26 @@ function showSalesDashboardUrls() {
   const r = syncSalesDashboard();
   const list = sdReadReps_();
 
+  // 名簿（JISHA_REFERRER_OPTIONS）から外れているのに稼働のままの行を目立たせる。
+  // **勝手に止めない。** 名簿に無くても実在する紹介者がいるため（例: 萩原愛也）。
+  // ただし退職者の行がそのままだと、その人のURLで顧客一覧が見え続けるので必ず気付かせる。
+  const roster = {};
+  JISHA_REFERRER_OPTIONS.split(",").forEach(function (nm) {
+    const t = nm.trim();
+    if (t) roster[t] = true;
+  });
+  let offRoster = 0;
+
   let rows = "";
   list.forEach(function (rep) {
     const active = rep.status === SD_STATUS_ACTIVE;
+    const stray  = active && !roster[rep.name];
+    if (stray) offRoster++;
     rows +=
-      '<tr>' +
-      '<td class="nm">' + escapeHtml_(rep.name) + (active ? "" : '<span class="off">停止中</span>') + '</td>' +
+      '<tr' + (stray ? ' class="stray"' : '') + '>' +
+      '<td class="nm">' + escapeHtml_(rep.name) +
+        (active ? "" : '<span class="off">停止中</span>') +
+        (stray ? '<span class="off">名簿にありません</span>' : '') + '</td>' +
       '<td><input type="text" readonly value="' + escapeHtml_(rep.url) + '" onclick="this.select()"></td>' +
       '<td><button type="button" onclick="cp(this)">コピー</button></td>' +
       '</tr>';
@@ -162,11 +192,23 @@ function showSalesDashboardUrls() {
     'button{font-size:12px;padding:6px 10px;border:none;border-radius:5px;background:#4f46e5;color:#fff;cursor:pointer;white-space:nowrap;}' +
     'button.done{background:#16a34a;}' +
     '.warn{background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:6px;padding:10px 12px;margin-bottom:12px;line-height:1.7;}' +
+    'tr.stray td{background:#fffbeb;}' +
     '</style>' +
     '<p>営業ひとりに1本のURLです。<b>本人にだけ</b>LINEなどで送り、ブックマークしてもらってください。</p>' +
     '<div class="warn">このURLを知っている人は、その営業の顧客一覧を見られます。' +
     '本人以外へ転送しないよう伝えてください。渡し間違えたときは、営業マスタの合言葉の欄を' +
     '空にしてこのメニューをもう一度実行すると、新しいURLに変わります（古いURLは使えなくなります）。</div>' +
+    (r.duplicated && r.duplicated.length
+      ? '<div class="warn"><b>合言葉が重複しています: ' + escapeHtml_(r.duplicated.join("、")) + '</b>。' +
+        'この方たちのURLは安全のため開けません（誰のURLか決まらないため）。' +
+        '営業マスタで重複している合言葉の欄を<b>空にして</b>、このメニューをもう一度実行してください。</div>'
+      : '') +
+    (offRoster
+      ? '<div class="warn"><b>名簿に無い担当が ' + offRoster + ' 名います（黄色の行）。</b>' +
+        '退職・異動した方であれば、営業マスタのその行の「状態」を <b>停止</b> に変えてください。' +
+        'そのままだと、その方のURLで顧客一覧が見え続けます。' +
+        '名簿に無いだけで在籍している方（代理店経由の紹介者など）は、そのままで構いません。</div>'
+      : '') +
     '<table>' + rows + '</table>' +
     '<script>' +
     'function cp(b){var i=b.parentNode.parentNode.querySelector("input");i.select();' +
@@ -184,6 +226,32 @@ function showSalesDashboardUrls() {
 // 画面へ返すデータ
 // ---------------------------------------------------------------
 
+// 紹介者名 → 正規名。**1行ごとに引くので必ず覚えておく。**
+// `agCanonicalRep_()` は呼ぶたびに対応表（名簿10名＋別名20件）を作り直すので、
+// 申請状況一覧と承認漏れ管理で計1600行を素で回すと正規表現が十数万回走る。
+// この案件は「設定シートの全行スキャンで56秒」の前科があるので、
+// 営業が毎回待たされる経路では先に潰しておく。紹介者名は同じ値が何度も出るので
+// 覚えておくだけでほぼ全部が当たる。
+let SD_REP_MEMO = null;
+function sdCanonRep_(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (!SD_REP_MEMO) SD_REP_MEMO = {};
+  if (SD_REP_MEMO[s] !== undefined) return SD_REP_MEMO[s];
+  const v = agCanonicalRep_(s);
+  SD_REP_MEMO[s] = v;
+  return v;
+}
+
+// **営業が書いた文字列をシートへ入れる前に必ず通す。**
+// `=` や `+` で始まる文字列は Google Sheets が数式として保存する。
+// メモは画面へ読み戻すので、`=営業マスタ!B2` と書けば**他人の合言葉が読める**。
+// 先頭に `'` を付けるとシートは「文字列として扱え」と解釈し、読むときは付けた `'` を返さない。
+function sdPlainText_(v) {
+  const s = String(v == null ? "" : v);
+  return /^[=+]/.test(s) ? "'" + s : s;
+}
+
 // スクショURLは「保存エラー: ...」のような文字列が入っていることがある。
 // リンクとして出すと押しても何も起きないので、httpで始まるものだけURLとして扱う。
 function sdSafeUrl_(v) {
@@ -193,10 +261,10 @@ function sdSafeUrl_(v) {
 
 // 申請状況一覧から、その営業の申請を拾って顧客ごとにまとめる。
 // 代理店経由（紹介者が「顧客名（担当者名）」形式）も担当営業の預かりなので含める。
-function sdCustomers_(repName) {
+function sdCustomers_(repName, problems) {
   const ss = getOrCreateSpreadsheet();
   const sh = ss.getSheetByName(APP_STATUS_SHEET);
-  if (!sh) return [];
+  if (!sh) { if (problems) problems.push(APP_STATUS_SHEET); return []; }
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return [];
 
@@ -207,22 +275,27 @@ function sdCustomers_(repName) {
   vals.forEach(function (r) {
     const custName = String(r[2] || "").trim();
     if (!custName) return;
-    if (agCanonicalRep_(r[3]) !== repName) return;
+    if (sdCanonRep_(r[3]) !== repName) return;
 
     const flags = getAdvertiserApprovalFlags(r[5]);
     const status = flags.approved ? "承認" : (flags.trackingMissing ? "非承認" : "確認中");
+    // **並び順と月の集計は文字列でなく時刻で決める。**
+    // 受信日時は手入力や移入で `2026-08-26 10:00:00` のような書き方が混ざりうる。
+    // 文字列のまま比べると、ハイフンの行が最新にならず、今月の集計からも落ちる。
+    const recvMs = aspToMillis_(r[0]);
     const recvAt = toDisplayDate_(r[0]);
 
     const key = normalizeName(custName);
     if (!byCust[key]) {
-      byCust[key] = { name: custName, lastRecvAt: recvAt, memo: "", cases: [] };
+      byCust[key] = { name: custName, lastRecvAt: recvAt, lastMs: recvMs, memo: "", cases: [] };
       order.push(key);
     }
     const c = byCust[key];
-    if (recvAt > c.lastRecvAt) c.lastRecvAt = recvAt;
+    if (recvMs > c.lastMs) { c.lastMs = recvMs; c.lastRecvAt = recvAt; }
     c.cases.push({
       caseName:   String(r[1] || ""),
       recvAt:     recvAt,
+      recvMs:     recvMs,
       status:     status,
       agencyName: String(r[4] || ""),
       shotUrl:    sdSafeUrl_(r[6])
@@ -233,31 +306,27 @@ function sdCustomers_(repName) {
   const out = order.map(function (k) {
     const c = byCust[k];
     c.memo = memos[k] || "";
-    c.cases.sort(function (a, b) { return a.recvAt < b.recvAt ? 1 : -1; });
+    c.cases.sort(function (a, b) { return b.recvMs - a.recvMs; });
     return c;
   });
-  out.sort(function (a, b) { return a.lastRecvAt < b.lastRecvAt ? 1 : -1; });
+  out.sort(function (a, b) { return b.lastMs - a.lastMs; });
   return out;
 }
 
 // 承認漏れ管理から、その営業がまだ答えていない確認依頼を拾う。
 // 対象は pushSalesApprovalChecks と同じ条件（型B・型C／リンクが生きている／未確認）。
-function sdChecks_(repName) {
+function sdChecks_(repName, problems) {
   const ss = getOrCreateSpreadsheet();
   const sh = ss.getSheetByName(AG_MANAGE_SHEET);
-  if (!sh) return [];
+  if (!sh) { if (problems) problems.push(AG_MANAGE_SHEET); return []; }
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return [];
 
   const vals = sh.getRange(2, 1, lastRow - 1, AG_HEADERS.length).getValues();
   const out = [];
   vals.forEach(function (r) {
-    const type = String(r[AGC_TYPE - 1] || "");
-    if (type !== "B" && type !== "C") return;
-    if (String(r[AGC_LINK - 1] || "") === "リンク切れ疑い") return;
-    const chk = String(r[AGC_SALESCHK - 1] || "").trim();
-    if (chk && chk !== "未確認") return;
-    if (agCanonicalRep_(r[AGC_REF - 1]) !== repName) return;
+    if (!sdIsOpenCheck_(r)) return;
+    if (sdCanonRep_(r[AGC_REF - 1]) !== repName) return;
 
     const shot = String(r[AGC_SHOT - 1] || "").trim();
     out.push({
@@ -285,14 +354,18 @@ function salesDashboardPayload_(token) {
     return { error: "このURLは現在ご利用いただけません。担当者へご連絡ください。" };
   }
 
-  const customers = sdCustomers_(rep.name);
-  const checks    = sdChecks_(rep.name);
+  // 読む先のシートが無いと「0件」と区別が付かない。**黙って0件にしない。**
+  const problems  = [];
+  const customers = sdCustomers_(rep.name, problems);
+  const checks    = sdChecks_(rep.name, problems);
   const thisMonth = formatJST(new Date()).substring(0, 7); // yyyy/MM
 
   let applied = 0, approved = 0, waiting = 0;
   customers.forEach(function (c) {
     c.cases.forEach(function (k) {
-      if (String(k.recvAt).substring(0, 7) === thisMonth) {
+      // 受信日時の書き方が揺れても落ちないよう、時刻から月を作り直して比べる
+      const ym = k.recvMs ? formatJST(new Date(k.recvMs)).substring(0, 7) : String(k.recvAt).substring(0, 7);
+      if (ym === thisMonth) {
         applied++;
         if (k.status === "承認") approved++;
       }
@@ -303,6 +376,10 @@ function salesDashboardPayload_(token) {
   return {
     repName: rep.name,
     updatedAt: formatJST(new Date()),
+    // 画面はこれが入っていたら「0件」ではなく異常として出す
+    notice: problems.length
+      ? "いま一覧を読み込めませんでした。0件ではなく、システム側の不具合です。事務までご連絡ください。"
+      : "",
     summary: {
       needCheck:      checks.length,
       appliedMonth:   applied,
@@ -318,6 +395,17 @@ function salesDashboardPayload_(token) {
 // ---------------------------------------------------------------
 // 画面からの書き込み
 // ---------------------------------------------------------------
+
+// 画面へ出す対象かどうか。**読むときと書くときで必ず同じ判定を使う。**
+// キーだけで当てて書くと、画面に出していない行（同じ案件・顧客・同じ分の型Dなど）まで
+// 「出す」に変わり、広告主への依頼へ載りうる（Codexの指摘7）。
+function sdIsOpenCheck_(r) {
+  const type = String(r[AGC_TYPE - 1] || "");
+  if (type !== "B" && type !== "C") return false;
+  if (String(r[AGC_LINK - 1] || "") === "リンク切れ疑い") return false;
+  const chk = String(r[AGC_SALESCHK - 1] || "").trim();
+  return !chk || chk === "未確認";
+}
 
 // 承認確認の答えを 承認漏れ管理 へ直接書く。
 // 行番号ではなく照合キーで引く（案件シートの編集で行が動くため）。
@@ -338,6 +426,20 @@ function handleSalesCheck_(data) {
   const ss = getOrCreateSpreadsheet();
   const sh = ss.getSheetByName(AG_MANAGE_SHEET);
   if (!sh) return { result: "error", message: "確認の一覧が見つかりません。担当者へご連絡ください。" };
+
+  // 二重に押したとき・別の人と同時のときに、読み→書きの間へ割り込ませない。
+  // **`getDocumentLock()` はWebアプリでは null を返す**ので使えない（公式仕様）。
+  // 取れなければ書かずに引き返す（黙って壊すより、もう一度押してもらう方がよい）。
+  const lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(15000)) {
+      return { result: "error", message: "いま混み合っています。少しおいて、もう一度押してください。" };
+    }
+  } catch (e) {
+    return { result: "error", message: "いま混み合っています。少しおいて、もう一度押してください。" };
+  }
+  try {
+
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return { result: "error", message: "対象が見つかりませんでした。" };
 
@@ -346,19 +448,31 @@ function handleSalesCheck_(data) {
   for (let i = 0; i < vals.length; i++) {
     const r = vals[i];
     if (agKeyOf_(r[AGC_CASE - 1], r[AGC_NAME - 1], aspToMillis_(r[AGC_RECV - 1])) !== key) continue;
-    if (agCanonicalRep_(r[AGC_REF - 1]) !== rep.name) continue;
+    if (sdCanonRep_(r[AGC_REF - 1]) !== rep.name) continue;
+    // 画面に出していない行・すでに答えた行は書き換えない。
+    // これで「先に答えた方が勝ち」になり、古い画面から上書きされない。
+    if (!sdIsOpenCheck_(r)) continue;
     const row = i + 2;
-    sh.getRange(row, AGC_SALESCHK).setValue(answer);
-    if (comment) sh.getRange(row, AGC_SALESCMT).setValue(comment);
-    // OK なら広告主へ出せる。要再取得・取下げは出さない。
-    sh.getRange(row, AGC_SENDOK).setValue(answer === "OK" ? "出す" : "出さない");
+    // 営業確認・営業コメント・依頼可否は隣り合う3列なので**1回で書く**。
+    // 1セルずつ書くと、同じ人が二重に送ったときに書き込みが交差して
+    // 「取下げ なのに 出す」のような組み合わせが残りうる（そのまま広告主へ出てしまう）。
+    sh.getRange(row, AGC_SALESCHK, 1, 3).setValues([[
+      answer,
+      comment ? sdPlainText_(comment) : String(r[AGC_SALESCMT - 1] || ""),
+      answer === "OK" ? "出す" : "出さない"   // OK なら広告主へ出せる。要再取得・取下げは出さない
+    ]]);
     updated++;
   }
   if (!updated) {
-    return { result: "error", message: "対象が見つかりませんでした。画面を開き直してください。" };
+    // 誰か（自分の別の画面を含む）が先に答えた場合もここへ来る。
+    return { result: "error", message: "この件はすでに回答済みか、対象から外れています。「最新の状態にする」を押してご確認ください。" };
   }
   SpreadsheetApp.flush();
   return { result: "ok", updated: updated };
+
+  } finally {
+    try { lock.releaseLock(); } catch (e) { /* すでに解放されていれば何もしない */ }
+  }
 }
 
 // ---------------------------------------------------------------
@@ -390,10 +504,16 @@ function sdReadMemos_(repName) {
   if (!sh) return out;
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return out;
-  sh.getRange(2, 1, lastRow - 1, SD_MEMO_HEADERS.length).getValues().forEach(function (r) {
+  const range = sh.getRange(2, 1, lastRow - 1, SD_MEMO_HEADERS.length);
+  const vals = range.getValues();
+  // **式が入っている行は中身を返さない。** 書き込み側で防いでいるが、
+  // 人が手でシートへ式を入れた場合にも他のセルの中身が画面へ出ないようにする。
+  const fmls = range.getFormulas();
+  vals.forEach(function (r, i) {
     if (String(r[SDM_REP - 1] || "").trim() !== repName) return;
     const cust = String(r[SDM_CUST - 1] || "").trim();
     if (!cust) return;
+    if (fmls[i][SDM_MEMO - 1]) { out[normalizeName(cust)] = ""; return; }
     out[normalizeName(cust)] = String(r[SDM_MEMO - 1] || "");
   });
   return out;
@@ -417,13 +537,12 @@ function handleSalesMemo_(data) {
       if (String(vals[i][SDM_REP - 1] || "").trim() !== rep.name) continue;
       if (normalizeName(vals[i][SDM_CUST - 1]) !== key) continue;
       const row = i + 2;
-      sh.getRange(row, SDM_MEMO).setValue(memo);
-      sh.getRange(row, SDM_AT).setValue(formatJST(new Date()));
+      sh.getRange(row, SDM_MEMO, 1, 2).setValues([[sdPlainText_(memo), formatJST(new Date())]]);
       SpreadsheetApp.flush();
       return { result: "ok" };
     }
   }
-  sh.appendRow([rep.name, cust, memo, formatJST(new Date())]);
+  sh.appendRow([rep.name, sdPlainText_(cust), sdPlainText_(memo), formatJST(new Date())]);
   SpreadsheetApp.flush();
   return { result: "ok" };
 }

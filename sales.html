@@ -103,6 +103,7 @@
     background: #f0fdf4; border: 1px solid #86efac; color: #166534;
     border-radius: 8px; padding: 13px 15px; font-size: .88rem; font-weight: 600;
   }
+  .sent .sentsub { margin-top: 6px; font-weight: 400; font-size: .78rem; color: #3f6212; }
   .cardmsg {
     margin-top: 10px; font-size: .82rem; border-radius: 8px; padding: 10px 12px;
     background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
@@ -116,7 +117,7 @@
   }
   .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
   .chip {
-    padding: 8px 14px; font-size: .83rem; font-weight: 700; font-family: inherit;
+    min-height: 44px; padding: 8px 16px; font-size: .85rem; font-weight: 700; font-family: inherit;
     background: #fff; color: #475569; border: 1px solid #cbd5e1; border-radius: 999px; cursor: pointer;
   }
   .chip.on { background: #334155; color: #fff; border-color: #334155; }
@@ -141,8 +142,8 @@
 
   .memo { margin-top: 12px; }
   .memo .save {
-    margin-top: 8px; padding: 10px 18px; font-size: .85rem; font-weight: 700; font-family: inherit;
-    background: #4f46e5; color: #fff; border: none; border-radius: 8px; cursor: pointer;
+    min-height: 44px; margin-top: 8px; padding: 10px 22px; font-size: .88rem; font-weight: 700;
+    font-family: inherit; background: #4f46e5; color: #fff; border: none; border-radius: 8px; cursor: pointer;
   }
   .memo .save.done { background: #16a34a; }
   .memo .save:disabled { opacity: .5; cursor: default; }
@@ -161,6 +162,11 @@
     font-size: .95rem; font-weight: 700; font-family: inherit; cursor: pointer;
     background: #fff; color: #4f46e5; border: 1px solid #c7d2fe; border-radius: 10px;
   }
+  .notice {
+    background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
+    border-radius: 10px; padding: 13px 15px; font-size: .88rem; font-weight: 700;
+    margin-bottom: 16px; line-height: 1.7;
+  }
   .listnote {
     font-size: .78rem; color: #64748b; margin: 0 0 10px; text-align: center;
   }
@@ -170,10 +176,13 @@
   }
   .foot { margin-top: 22px; font-size: .76rem; color: #94a3b8; text-align: center; line-height: 1.9; }
   .foot button {
-    margin-top: 8px; padding: 9px 20px; font-size: .82rem; font-family: inherit; font-weight: 700;
-    background: #fff; color: #475569; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer;
+    min-height: 44px; margin-top: 8px; padding: 9px 22px; font-size: .85rem; font-family: inherit;
+    font-weight: 700; background: #fff; color: #475569; border: 1px solid #cbd5e1;
+    border-radius: 8px; cursor: pointer;
   }
-  .hidden { display: none; }
+  /* .tab .badge のような詳細度の高い指定に負けないよう !important を付ける。
+     実際に「0件なのにバッジが3のまま残る」不具合が出た。 */
+  .hidden { display: none !important; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 </head>
@@ -192,6 +201,8 @@
       <h1>営業ダッシュボード</h1>
       <div class="who" id="who"></div>
     </div>
+
+    <div class="notice hidden" id="notice"></div>
 
     <div class="stats" id="stats"></div>
 
@@ -272,6 +283,22 @@
   var uidN = 0;
   function nextId(prefix) { return prefix + "_" + (++uidN); }
 
+  // 書きかけのメモ（顧客名 → 文字列）。絞り込みや検索で作り直しても消えないように持っておく。
+  var memoDraft = {};
+  // 送信中かどうか（顧客名 → true）。**カードは作り直されるのでDOMに持たせない。**
+  // ここをDOMに持たせていたため、保存中に検索するとボタンが復活して二重に送れていた。
+  var memoBusy = {};
+
+  // 探すときの表記ゆれを吸収する。スペース除去・カタカナ→ひらがな・全角→半角・小文字化。
+  // サーバー側の normalizeName と同じ考え方。
+  function normKey(v) {
+    return String(v || "")
+      .replace(/[\s　]+/g, "")
+      .replace(/[ァ-ヶ]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0x60); })
+      .replace(/[Ａ-Ｚａ-ｚ０-９]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+      .toLowerCase();
+  }
+
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -341,6 +368,7 @@
       badge.textContent = String(s.needCheck);
       badge.classList.remove("hidden");
     } else {
+      badge.textContent = "";
       badge.classList.add("hidden");
     }
   }
@@ -353,8 +381,14 @@
 
     if (!DATA.checks || !DATA.checks.length) {
       var ok = el("div", "empty");
-      ok.appendChild(el("div", null, "確認をお願いしたいものはありません。"));
-      ok.appendChild(el("div", null, "ありがとうございます。新しく出てきたら、ここに並びます。"));
+      if (DATA.notice) {
+        // 読み込めていない。**「ありません」と言い切らない。**
+        ok.appendChild(el("div", null, "いまは表示できません。"));
+        ok.appendChild(el("div", null, "上の赤いお知らせをご覧ください。"));
+      } else {
+        ok.appendChild(el("div", null, "確認をお願いしたいものはありません。"));
+        ok.appendChild(el("div", null, "ありがとうございます。新しく出てきたら、ここに並びます。"));
+      }
       list.appendChild(ok);
       return;
     }
@@ -452,6 +486,9 @@
       b.addEventListener("click", function () {
         if (!window.confirm(a.confirm)) return;
         btns.forEach(function (x) { x.disabled = true; });
+        // **コメント欄も止める。** 送っている間に書き足されても送られないため、
+        // そのまま送信完了になると書いた本人は届いたと思ってしまう。
+        ta.readOnly = true;
         msg.classList.add("hidden");
         b.textContent = "送信中...";
         post(
@@ -460,12 +497,16 @@
             card.innerHTML = "";
             var done = el("div", "sent",
               c.caseName + " / " + c.customerName + " 様 … 「" + a.label + "」で送信しました。ありがとうございます。");
+            done.appendChild(el("div", "sentsub",
+              "押し間違えたときは、事務までご連絡ください。こちらで直せます。"));
             card.appendChild(done);
+            if (!DATA.summary) DATA.summary = {};
             DATA.summary.needCheck = Math.max(0, (DATA.summary.needCheck || 1) - 1);
             renderStats();
           },
           function (m) {
             btns.forEach(function (x) { x.disabled = false; });
+            ta.readOnly = false;
             b.textContent = a.label;
             b.appendChild(el("span", "desc", a.desc));
             msg.textContent = m;
@@ -511,14 +552,26 @@
     var word = (document.getElementById("q").value || "").trim();
 
     custList = (DATA.customers || []).filter(function (c) {
-      if (word && c.name.indexOf(word) < 0) return false;
+      if (word && normKey(c.name).indexOf(normKey(word)) < 0) return false;
       return c.cases.some(matchFilter);
     });
 
     if (!custList.length) {
-      list.appendChild(el("div", "empty",
-        word ? "「" + word + "」に当てはまるお客様は見つかりませんでした。"
-             : "表示できるお客様がいません。"));
+      var e2 = el("div", "empty");
+      if (word) {
+        e2.appendChild(el("div", null, "「" + word + "」に当てはまるお客様は見つかりませんでした。"));
+        e2.appendChild(el("div", null, "お名前の一部だけでも探せます。上の欄を空にすると全員出ます。"));
+      } else if (filter !== "すべて") {
+        e2.appendChild(el("div", null, "「" + filter + "」のお客様はいません。"));
+        e2.appendChild(el("div", null, "上の「すべて」を押すと、担当のお客様が全員出ます。"));
+      } else if (DATA.notice) {
+        e2.appendChild(el("div", null, "いまは表示できません。"));
+        e2.appendChild(el("div", null, "上の赤いお知らせをご覧ください。"));
+      } else {
+        e2.appendChild(el("div", null, "まだ表示できるお客様がいません。"));
+        e2.appendChild(el("div", null, "お客様が申込フォームから申し込むと、ここに出ます。"));
+      }
+      list.appendChild(e2);
       return;
     }
 
@@ -581,21 +634,48 @@
     ta.rows = 2;
     ta.id = nextId("memo");
     lab.htmlFor = ta.id;
-    ta.value = c.memo || "";
+    // 書きかけがあればそれを出す（絞り込みを変えても消えないように）
+    ta.value = (memoDraft[c.name] !== undefined) ? memoDraft[c.name] : (c.memo || "");
     ta.placeholder = "例: 8/30に再度ご連絡する";
+    ta.addEventListener("input", function () { memoDraft[c.name] = ta.value; });
     memo.appendChild(ta);
 
     var msg = el("div", "cardmsg hidden");
     var save = el("button", "save", "メモを保存");
     save.type = "button";
+    if (memoBusy[c.name]) { save.disabled = true; save.textContent = "保存中..."; }
     save.addEventListener("click", function () {
+      if (memoBusy[c.name]) return;          // 送信中は受け付けない
+      memoBusy[c.name] = true;
       save.disabled = true;
       save.textContent = "保存中...";
       msg.classList.add("hidden");
+      // **押した時点の中身を控えておく。** 送っている間に書き足されると、
+      // 「保存しました」と出ているのに送っていない文字が画面に残る。
+      var sending = ta.value;
       post(
-        { action: "salesMemo", token: TOKEN, customer: c.name, memo: ta.value },
+        { action: "salesMemo", token: TOKEN, customer: c.name, memo: sending },
         function () {
-          c.memo = ta.value;
+          memoBusy[c.name] = false;
+          c.memo = sending;
+          // **画面の要素ではなく「いまの書きかけ」と比べる。**
+          // 送信中に検索や絞り込みでカードが作り直されると、この関数が持っている
+          // textarea は画面から外れた古いものになる。それを見て消すと、
+          // 新しいカードへ書いた文字が黙って消えていた。
+          var now = (memoDraft[c.name] !== undefined) ? memoDraft[c.name] : sending;
+          var appended = (now !== sending);
+          if (!appended) delete memoDraft[c.name];
+
+          if (!card.isConnected) {
+            // カードが作り直されている。いまの画面へ反映し直す。
+            renderCustomers();
+            return;
+          }
+          if (appended) {
+            msg.textContent = "そのあとに書き足した分は、まだ保存されていません。"
+              + "もう一度「メモを保存」を押してください。";
+            msg.classList.remove("hidden");
+          }
           save.textContent = "保存しました";
           save.classList.add("done");
           setTimeout(function () {
@@ -605,6 +685,8 @@
           }, 1600);
         },
         function (m) {
+          memoBusy[c.name] = false;
+          if (!card.isConnected) { renderCustomers(); return; }
           save.disabled = false;
           save.textContent = "メモを保存";
           msg.textContent = m;
@@ -635,6 +717,10 @@
   function render(d) {
     DATA = d;
     document.getElementById("who").textContent = d.repName + " さん";
+    // 読み込めていないときは「0件」と見せない（この案件は黙って空振りする事故が多い）
+    var nt = document.getElementById("notice");
+    if (d.notice) { nt.textContent = d.notice; nt.classList.remove("hidden"); }
+    else { nt.textContent = ""; nt.classList.add("hidden"); }
     document.getElementById("updatedAt").textContent = d.updatedAt || "";
     renderStats();
     renderChecks();
