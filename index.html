@@ -232,6 +232,24 @@
 <script>
   let GAS_URL = "";
 
+  // ASPの「CL付加情報1」へ流すクエリパラメータ名。
+  // FPRに確認した公式の仕様（2026-08-28 回答）。param1〜param5 が CL付加情報1〜5 に対応する。
+  // ここに弊社のクリックIDを載せると、そのまま獲得ログへ返るので突合が確実になる。
+  const ASP_CLICK_ID_PARAM = "param1";
+
+  // アフィリエイトURLへクリックIDを付ける。
+  // **押す前に確定させる。** 押してから採番しても href は既に決まっていて間に合わない。
+  // 下書きから復元したIDがあればそれを使う（同じ申請で2回押しても同じIDが載る）。
+  function applyClickIdToAffiliate(config) {
+    const btn = document.getElementById("affiliateBtn");
+    const base = config.affiliateUrl || "";
+    if (!base) { btn.href = "#"; return; }
+    if (!window._clickId) window._clickId = newClickId();
+    document.getElementById("clickId").value = window._clickId;
+    const sep = base.indexOf("?") >= 0 ? "&" : "?";
+    btn.href = base + sep + ASP_CLICK_ID_PARAM + "=" + encodeURIComponent(window._clickId);
+  }
+
   // クリックとフォーム送信を結ぶための一意な値。
   // crypto.randomUUID が無い環境（古いiOS等）でも動くよう手作りの経路を残す。
   function newClickId() {
@@ -373,8 +391,10 @@
 
     // アフィリエイトボタン
     const btn = document.getElementById("affiliateBtn");
-    btn.href        = config.affiliateUrl        || "#";
     btn.textContent = config.affiliateButtonText || "アフィリエイトリンクを開く";
+    // **クリックIDはボタンを押す前に決めておく。** ASPへ渡すのはリンクを開く瞬間なので、
+    // 押してから採番したのでは間に合わない（href は既に確定している）。
+    applyClickIdToAffiliate(config);
     btn.addEventListener("click", () => {
       const now       = new Date();
       const formatted = formatDatetime(now);
@@ -389,8 +409,6 @@
       // ASPの記録と突き合わせる唯一のキーなので、ずれるとその成果が結びつかない。
       // 失敗しても申請は続けられるよう、完全に投げっぱなしにする。
       try {
-        if (!window._clickId) window._clickId = newClickId();
-        document.getElementById("clickId").value = window._clickId;
         fetch(GAS_URL, {
           method: "POST",
           mode: "no-cors",
@@ -546,8 +564,10 @@
       if (value != null && value !== "") setFieldValue(field, value);
     });
     if (draft.clickId) {
-      document.getElementById("clickId").value = draft.clickId;
+      // 前回の続きなら同じIDを使う。**アフィリエイトURLも作り直す**（作り直さないと
+      // 復元前に採番した別のIDがリンクに載ったままになり、ASPと自社で違うIDになる）。
       window._clickId = draft.clickId;
+      applyClickIdToAffiliate(config);
     }
     if (draft.clickTime) {
       const clickInput = document.getElementById("clickTime");
