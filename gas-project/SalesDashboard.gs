@@ -376,6 +376,9 @@ function salesDashboardPayload_(token) {
   return {
     repName: rep.name,
     updatedAt: formatJST(new Date()),
+    // 顧客の公式LINE追加の確認（SalesLineReview.gs）を出すか。
+    // 設定が無いときはタブごと出さない。中身は `?sales_line=` で別に読む。
+    lineEnabled: slrEnabled_(),
     // 画面はこれが入っていたら「0件」ではなく異常として出す
     notice: problems.length
       ? "いま一覧を読み込めませんでした。0件ではなく、システム側の不具合です。事務までご連絡ください。"

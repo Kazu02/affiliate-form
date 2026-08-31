@@ -150,6 +150,15 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    // 顧客の公式LINE追加の確認（SalesLineReview.gs）。統合アプリへ問い合わせるので、
+    // **本体の画面とは別に読む**。あちらが遅い・落ちているときに、承認確認と
+    // 顧客一覧まで巻き込んで開けなくなるのを避けるため。
+    if (e && e.parameter && e.parameter.sales_line) {
+      return ContentService
+        .createTextOutput(JSON.stringify(salesLinePayload_(e.parameter.sales_line)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const ss       = getOrCreateSpreadsheet();
     const formName = (e && e.parameter && e.parameter.form) ? e.parameter.form : getFirstFormCode(ss);
     const config   = readConfig(ss, formName);
@@ -238,10 +247,12 @@ function doPost(e) {
 
     // 営業ダッシュボードからの書き込み（承認確認の3択・顧客メモ）。
     // 合言葉で本人を確かめ、自分の担当行だけを書き換える（SalesDashboard.gs 参照）。
-    if (data.action === "salesCheck" || data.action === "salesMemo") {
+    if (data.action === "salesCheck" || data.action === "salesMemo" || data.action === "salesLineReview") {
       let out;
       try {
-        out = data.action === "salesCheck" ? handleSalesCheck_(data) : handleSalesMemo_(data);
+        out = data.action === "salesCheck" ? handleSalesCheck_(data)
+            : data.action === "salesMemo" ? handleSalesMemo_(data)
+            : handleSalesLineReview_(data);
       } catch (sdErr) {
         Logger.log("営業ダッシュボード エラー: " + sdErr);
         out = { result: "error", message: "保存できませんでした。時間をおいて再度お試しください。" };
@@ -687,6 +698,8 @@ function onOpen() {
     .addSeparator()
     .addItem("日次レポート（テスト送信）",           "dailyReport")
     .addItem("顧客LINE登録集計を確認",             "checkCustomerLineStatsFromMenu")
+    .addItem("LINE確認の疎通を確かめる",           "checkSalesLineReviewFromMenu")
+    .addItem("LINE確認の秘密値を作り直す",         "showSalesReviewSecretHash")
     .addItem("30件クエスト進捗（テスト送信）",       "campaignReport")
     .addItem("150件クエスト進捗（テスト送信）",     "quest150Report")
     .addItem("緊急クエスト進捗（テスト送信）",       "emergencyQuestReportTest")

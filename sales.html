@@ -148,6 +148,17 @@
   .memo .save.done { background: #16a34a; }
   .memo .save:disabled { opacity: .5; cursor: default; }
 
+  /* ---- 公式LINEの確認 ---- */
+  /* タブが3つになると既定の文字サイズでは折り返す（実測 iPhone SE 幅）。 */
+  .tabs.three .tab { font-size: .8rem; padding: 12px 3px; }
+  .tabs.three .tab .badge { margin-left: 4px; padding: 1px 6px; font-size: .72rem; }
+  .pick { margin-top: 12px; }
+  .pick input, .pick select {
+    width: 100%; margin-top: 8px; padding: 12px 11px; font-size: 1rem; font-family: inherit;
+    border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a;
+  }
+  .pick .hit { margin-top: 6px; font-size: .74rem; color: #94a3b8; }
+
   /* ---- 状態 ---- */
   .state { text-align: center; padding: 46px 20px; color: #64748b; font-size: .94rem; }
   .state.error { color: #991b1b; }
@@ -208,6 +219,7 @@
 
     <div class="tabs">
       <button type="button" class="tab active" id="tabCheck">確認のお願い<span class="badge hidden" id="tabBadge"></span></button>
+      <button type="button" class="tab hidden" id="tabLine">LINEの確認<span class="badge hidden" id="tabLineBadge"></span></button>
       <button type="button" class="tab" id="tabCust">お客様一覧</button>
     </div>
 
@@ -220,6 +232,16 @@
         押した内容はそのまま事務へ届きます。
       </div>
       <div id="checkList"></div>
+    </section>
+
+    <section id="paneLine" class="hidden">
+      <div class="guide">
+        <b>お客様が公式LINEを追加して、お名前を送ってくださいました。</b><br>
+        ご自身のお客様かどうかを見て、<b>どのお客様かを選んでください。</b>
+        選んでいただいたあと、事務が最終の確認をします。そこまで進むと、
+        そのお客様へ公式LINEでご案内をお送りできるようになります。
+      </div>
+      <div id="lineList"></div>
     </section>
 
     <section id="paneCust" class="hidden">
@@ -701,16 +723,259 @@
     return card;
   }
 
-  // ---- タブ ----
-  function setTab(which) {
-    var tc = document.getElementById("tabCheck"), tu = document.getElementById("tabCust");
-    if (which === "check") {
-      tc.classList.add("active"); tu.classList.remove("active");
-      show("paneCheck"); hide("paneCust");
-    } else {
-      tu.classList.add("active"); tc.classList.remove("active");
-      show("paneCust"); hide("paneCheck");
+  // ---- 公式LINEの確認 ----
+  // データはこのスプレッドシートに無く、統合アプリ（顧客向け公式LINEの正データ）から取る。
+  // **本体の画面とは別に読む。** あちらが遅い・落ちているときに、承認確認と
+  // お客様一覧まで巻き込んで開けなくなるのを避けるため。
+  var LINE = null;
+
+  function loadLine() {
+    fetch(CONFIG.gasUrl + "?sales_line=" + encodeURIComponent(TOKEN), { method: "GET" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.available) { hideLineTab(); return; }
+        LINE = d;
+        renderLine();
+      })
+      .catch(function () {
+        // タブは出したまま、読めなかったことを中に出す。
+        // 黙って「0件」にすると、お待たせしているお客様に気づけない。
+        LINE = {
+          pending: [], customers: [],
+          notice: "いまLINEの確認を読み込めませんでした。0件ではありません。少しおいて「最新の状態にする」を押してください。"
+        };
+        renderLine();
+      });
+  }
+
+  function showLineTab() {
+    document.getElementById("tabLine").classList.remove("hidden");
+    document.querySelector(".tabs").classList.add("three");
+  }
+
+  function hideLineTab() {
+    document.getElementById("tabLine").classList.add("hidden");
+    document.getElementById("tabLineBadge").classList.add("hidden");
+    document.querySelector(".tabs").classList.remove("three");
+    hide("paneLine");
+  }
+
+  function setLineBadge(n) {
+    var badge = document.getElementById("tabLineBadge");
+    if (n > 0) { badge.textContent = String(n); badge.classList.remove("hidden"); }
+    else { badge.textContent = ""; badge.classList.add("hidden"); }
+  }
+
+  // まだ答えていないカードの数。答えたカードは中身を差し替えるので、
+  // 残っているボタンの数がそのまま残件数になる（一覧は作り直さない）。
+  function countLineLeft() {
+    return document.querySelectorAll("#lineList .card .answers").length;
+  }
+
+  function renderLine() {
+    var list = document.getElementById("lineList");
+    list.innerHTML = "";
+
+    var pending = (LINE && LINE.pending) || [];
+    setLineBadge(pending.length);
+
+    if (LINE && LINE.notice) {
+      var warn = el("div", "cardmsg", LINE.notice);
+      warn.style.marginTop = "0";
+      list.appendChild(warn);
     }
+
+    if (!pending.length) {
+      var ok = el("div", "empty");
+      if (LINE && LINE.notice) {
+        ok.appendChild(el("div", null, "いまは表示できません。"));
+        ok.appendChild(el("div", null, "上のお知らせをご覧ください。"));
+      } else {
+        ok.appendChild(el("div", null, "確認をお願いしたいものはありません。"));
+        ok.appendChild(el("div", null, "お客様が公式LINEを追加すると、ここに並びます。"));
+      }
+      list.appendChild(ok);
+      return;
+    }
+
+    if (LINE.customersTruncated) {
+      list.appendChild(el("div", "listnote",
+        "お客様が多いため、選べる一覧は先頭1000人までです。見つからないときは事務までご連絡ください。"));
+    }
+    pending.forEach(function (it) { list.appendChild(lineCard(it)); });
+  }
+
+  // "2026-08-30T..." → 「8月30日」／"1980-01-01" → 「1980年1月1日」
+  function lineDay(iso) {
+    var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? (Number(m[2]) + "月" + Number(m[3]) + "日") : "";
+  }
+  function lineBirth(ymd) {
+    var m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? (m[1] + "年" + Number(m[2]) + "月" + Number(m[3]) + "日") : String(ymd || "");
+  }
+
+  function lineCard(it) {
+    var card = el("div", "card");
+
+    card.appendChild(el("div", "case", (it.submittedDisplayName || "") + " 様"));
+
+    var meta = [];
+    if (it.dateOfBirth) meta.push("生年月日 " + lineBirth(it.dateOfBirth));
+    var day = lineDay(it.submittedAt);
+    if (day) meta.push(day + "に届きました");
+    if (meta.length) card.appendChild(el("div", "meta", meta.join(" / ")));
+
+    if (it.candidateCustomerName) {
+      card.appendChild(el("div", "via", "「" + it.candidateCustomerName + "」様ではないかと思われます"));
+    } else if (it.matchCount > 1) {
+      card.appendChild(el("div", "via", "同じお名前の方が " + it.matchCount + " 人いらっしゃいます"));
+    } else {
+      card.appendChild(el("div", "via", "同じお名前の方が見つかりませんでした"));
+    }
+
+    // ---- どのお客様かを選ぶ ----
+    var pick = el("div", "pick");
+    var sel  = el("select");
+    sel.id = nextId("pick");
+
+    var lab = el("label", "cmtlabel", "どのお客様ですか ");
+    lab.appendChild(el("span", "cmthint", "（お名前で絞り込めます）"));
+    lab.htmlFor = sel.id;
+    pick.appendChild(lab);
+
+    var find = el("input");
+    find.type = "text";
+    find.autocomplete = "off";
+    find.placeholder = "お名前で絞り込む（例: 山田）";
+    pick.appendChild(find);
+    pick.appendChild(sel);
+
+    var hit = el("div", "hit");
+    pick.appendChild(hit);
+    card.appendChild(pick);
+
+    var all = (LINE && LINE.customers) || [];
+    function fill(q) {
+      var key = String(q || "").trim();
+      var rows = key
+        ? all.filter(function (c) { return String(c.displayName).indexOf(key) >= 0; })
+        : all;
+      // 絞り込みで選んでいた人が消えないよう覚えておく
+      var keep = sel.value;
+      sel.innerHTML = "";
+      var head = el("option", null, "選んでください");
+      head.value = "";
+      sel.appendChild(head);
+      rows.forEach(function (c) {
+        var o = el("option", null, c.displayName);
+        o.value = c.id;
+        sel.appendChild(o);
+      });
+      if (keep) sel.value = keep;
+      hit.textContent = key
+        ? (rows.length + " 人が見つかりました")
+        : (all.length ? (all.length + " 人から選べます") : "選べるお客様がいません。事務までご連絡ください。");
+    }
+    fill("");
+    // 自動で見つかった候補は先に選んでおく（そのままでよければ押すだけ）
+    if (it.candidateCustomerId) sel.value = it.candidateCustomerId;
+    find.addEventListener("input", function () { fill(find.value); });
+
+    // ---- 2択 ----
+    var OK_LABEL = "このお客様で間違いありません";
+    var OK_DESC  = "選んだお客様としてお伝えします。このあと事務が最終の確認をします。";
+    var NG_LABEL = "心当たりがありません";
+    var NG_DESC  = "ご自身のお客様ではない場合。事務が引き取ります。";
+
+    var msg   = el("div", "cardmsg hidden");
+    var wrap  = el("div", "answers");
+    var okBtn = el("button", "ans ans-ok", OK_LABEL);
+    okBtn.type = "button";
+    okBtn.appendChild(el("span", "desc", OK_DESC));
+    var ngBtn = el("button", "ans ans-drop", NG_LABEL);
+    ngBtn.type = "button";
+    ngBtn.appendChild(el("span", "desc", NG_DESC));
+
+    function send(decision, btn, label, desc) {
+      var name = "";
+      if (decision === "approved") {
+        if (!sel.value) {
+          msg.textContent = "どのお客様かを選んでから押してください。";
+          msg.classList.remove("hidden");
+          return;
+        }
+        name = sel.options[sel.selectedIndex].textContent;
+      }
+      var ask = decision === "approved"
+        ? "「" + name + "」様としてお伝えします。よろしいですか。"
+        : "「心当たりがありません」でお伝えします。よろしいですか。";
+      if (!window.confirm(ask)) return;
+
+      okBtn.disabled = true;
+      ngBtn.disabled = true;
+      // 送っている間に選び直されても送られない。止めておかないと
+      // 押した本人は「選び直したほうが届いた」と思ってしまう。
+      sel.disabled  = true;
+      find.disabled = true;
+      msg.classList.add("hidden");
+      btn.textContent = "送信中...";
+
+      post(
+        {
+          action: "salesLineReview",
+          token: TOKEN,
+          registrationId: it.id,
+          decision: decision,
+          customerId: decision === "approved" ? sel.value : "",
+          expectedUpdatedAt: it.expectedUpdatedAt
+        },
+        function () {
+          card.innerHTML = "";
+          var done = el("div", "sent", decision === "approved"
+            ? (it.submittedDisplayName + " 様 … 「" + name + "」様としてお伝えしました。ありがとうございます。")
+            : (it.submittedDisplayName + " 様 … 「心当たりがありません」とお伝えしました。"));
+          done.appendChild(el("div", "sentsub",
+            "このあと事務が最終の確認をします。押し間違えたときは、事務までご連絡ください。"));
+          card.appendChild(done);
+          setLineBadge(countLineLeft());
+        },
+        function (m) {
+          okBtn.disabled  = false;
+          ngBtn.disabled  = false;
+          sel.disabled    = false;
+          find.disabled   = false;
+          btn.textContent = label;
+          btn.appendChild(el("span", "desc", desc));
+          msg.textContent = m;
+          msg.classList.remove("hidden");
+        }
+      );
+    }
+
+    okBtn.addEventListener("click", function () { send("approved", okBtn, OK_LABEL, OK_DESC); });
+    ngBtn.addEventListener("click", function () { send("rejected", ngBtn, NG_LABEL, NG_DESC); });
+
+    wrap.appendChild(okBtn);
+    wrap.appendChild(ngBtn);
+    card.appendChild(wrap);
+    card.appendChild(msg);
+    return card;
+  }
+
+  // ---- タブ ----
+  var TABS = [
+    { key: "check", tab: "tabCheck", pane: "paneCheck" },
+    { key: "line",  tab: "tabLine",  pane: "paneLine"  },
+    { key: "cust",  tab: "tabCust",  pane: "paneCust"  }
+  ];
+
+  function setTab(which) {
+    TABS.forEach(function (t) {
+      var on = t.key === which;
+      document.getElementById(t.tab).classList.toggle("active", on);
+      if (on) show(t.pane); else hide(t.pane);
+    });
     window.scrollTo(0, 0);
   }
 
@@ -730,6 +995,11 @@
     show("content");
     // 確認のお願いが無ければ、開いた時点でお客様一覧を見せる。
     setTab((d.summary && d.summary.needCheck > 0) ? "check" : "cust");
+
+    // 公式LINEの確認は統合アプリから取るので、**画面を出したあとに読む**。
+    // 設定が無ければ何も出さない（タブごと隠したまま）。
+    if (d.lineEnabled) { showLineTab(); loadLine(); }
+    else { hideLineTab(); }
   }
 
   function load() {
@@ -756,8 +1026,9 @@
       fail("URLが正しくありません。担当者からお送りしたURLをそのまま開いてください。");
       return;
     }
-    document.getElementById("tabCheck").addEventListener("click", function () { setTab("check"); });
-    document.getElementById("tabCust").addEventListener("click", function () { setTab("cust"); });
+    TABS.forEach(function (t) {
+      document.getElementById(t.tab).addEventListener("click", function () { setTab(t.key); });
+    });
     document.getElementById("q").addEventListener("input", renderCustomers);
     document.getElementById("reload").addEventListener("click", load);
     load();
