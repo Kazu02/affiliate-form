@@ -101,10 +101,12 @@ function salesLinePayload_(token) {
 
   const r = slrFetch_("get", "?staff=" + encodeURIComponent(rep.name), null);
   if (!r.ok) {
-    // 担当者を引き当てられない（アプリ未ログイン等）のは設定の話なので、
-    // その旨をそのまま出す。押せるものが無いだけで、画面は壊れていない。
+    // **理由をそのまま画面へ出さない。** 「対応表に登録されていません」は社内の言い方で、
+    // 受け取る営業には何をすればよいのか分からない（この画面はITに不慣れな人が前提）。
+    // 原因はログへ残し、画面には次の動作だけを出す。原因を見るときはメニューの
+    // 「LINE確認の疎通を確かめる」で担当ごとに確かめられる。
     if (r.status === 404 && r.body && r.body.message) {
-      return { available: true, pending: [], customers: [], notice: r.body.message };
+      Logger.log("LINE確認: 担当を引き当てられません（" + rep.name + "）: " + r.body.message);
     }
     return { available: true, pending: [], customers: [], notice: SLR_MSG_UNAVAILABLE };
   }
@@ -163,8 +165,13 @@ function handleSalesLineReview_(data) {
   if (r.reason === "network") return { result: "error", message: SLR_MSG_NETWORK };
   if (r.status === 409) return { result: "error", message: SLR_MSG_CONFLICT };
   if (r.status === 404) {
-    const msg = (r.body && r.body.message) ? r.body.message : SLR_MSG_CONFLICT;
-    return { result: "error", message: msg };
+    // 担当が引き当てられない＝設定の話。対象が見つからない＝先に誰かが答えた。
+    // どちらも社内の言い方は出さず、次の動作だけを伝える。
+    if (r.body && r.body.error === "staff_unresolved") {
+      Logger.log("LINE確認: 担当を引き当てられません（" + rep.name + "）: " + (r.body.message || ""));
+      return { result: "error", message: SLR_MSG_UNAVAILABLE };
+    }
+    return { result: "error", message: SLR_MSG_CONFLICT };
   }
   if (r.status === 400) {
     return { result: "error", message: "そのお客様は選べませんでした。画面を開き直してお試しください。" };
