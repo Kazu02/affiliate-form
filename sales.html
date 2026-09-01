@@ -181,6 +181,31 @@
   .listnote {
     font-size: .78rem; color: #64748b; margin: 0 0 10px; text-align: center;
   }
+  .pager {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    flex-wrap: wrap; margin: 4px 0 14px;
+  }
+  .pager button {
+    min-height: 44px; min-width: 44px; padding: 8px 12px;
+    font-size: .9rem; font-family: inherit; cursor: pointer;
+    background: #fff; color: #334155; border: 1px solid #cbd5e1; border-radius: 9px;
+  }
+  .pager button:disabled { color: #cbd5e1; cursor: default; }
+  .pager button.cur { background: #334155; color: #fff; border-color: #334155; font-weight: 700; }
+  .pager .pinfo { width: 100%; text-align: center; font-size: .78rem; color: #64748b; }
+  .sortbar { display: flex; gap: 7px; flex-wrap: wrap; margin: 0 0 12px; align-items: center; }
+  .sortbar .lb { font-size: .78rem; color: #64748b; }
+  .todo {
+    margin-top: 10px; padding: 10px 12px;
+    background: #fffbeb; border: 1px solid #fde68a; border-radius: 9px;
+  }
+  .todo-t { font-size: .78rem; font-weight: 700; color: #92400e; margin-bottom: 6px; }
+  .todo-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .todo-item {
+    font-size: .78rem; color: #78350f; background: #fef3c7;
+    border: 1px solid #fcd34d; border-radius: 6px; padding: 3px 8px;
+  }
+  .todo-done { font-size: .78rem; color: #64748b; margin-top: 10px; }
   .empty {
     background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
     padding: 30px 20px; text-align: center; color: #64748b; font-size: .9rem;
@@ -255,6 +280,7 @@
         <input type="text" id="q" placeholder="お名前で探す（例: 山田）" autocomplete="off">
       </div>
       <div class="chips" id="chips"></div>
+      <div class="sortbar" id="sortbar"></div>
       <div id="custList"></div>
     </section>
 
@@ -279,7 +305,15 @@
   // 一度に出す件数。**全部出すと縦に長くなりすぎて使えない**
   // （実データで69件＝スマホ58画面分あった）。少しずつ足していく。
   var CHECK_STEP = 10, CUST_STEP = 20;
-  var checkShown = 0, custShown = 0, custList = [];
+  var checkShown = 0, custList = [];
+
+  // お客様一覧はページ切替にする。「つづきを見る」で足していく形だと、
+  // お客様が増えるほど下へ伸び続け、後ろの人にたどり着けなくなる。
+  var custPage = 0;
+
+  // 並べ替え。既定は新しい順。
+  // 以前は「お待たせしている順」固定で、先頭が122日前の終了案件だった。
+  var sortOrder = "新しい順";
 
   // 確認するところ。事務・スプレッドシート側の案内と同じ5点にそろえてある。
   var CHECKPOINTS = [
@@ -546,43 +580,89 @@
   }
 
   // ---- お客様一覧 ----
+  // 「まだお済みでない案件」を出してよいか。
+  // **3つの状態を混ぜない。**
+  //   (1) 稼働案件を読めなかった   → todoReady=false。出さない（0件と誤読させない）
+  //   (2) 読めたが稼働案件が0件    → 出さない。「すべてお済み」と書くと嘘になる
+  //   (3) 読めて稼働案件がある      → 出す
+  function todoVisible() {
+    return !!(DATA && DATA.todoReady && DATA.summary && DATA.summary.activeCaseCount > 0);
+  }
+
   function renderChips() {
     var box = document.getElementById("chips");
     box.innerHTML = "";
-    ["すべて", "結果待ち", "承認", "非承認"].forEach(function (name) {
+
+    var names = ["すべて", "結果待ち", "承認", "非承認"];
+    // 「未実施あり」は稼働案件を読めたときだけ出す。
+    // 読めていないのに出すと「未実施なし」と読める画面になる。
+    if (todoVisible()) names.push("未実施あり");
+
+    names.forEach(function (name) {
       var b = el("button", "chip" + (filter === name ? " on" : ""), name);
       b.type = "button";
       b.addEventListener("click", function () {
         filter = name;
+        custPage = 0;          // 絞り込みを変えたら1ページ目へ戻す
         renderChips();
         renderCustomers();
       });
       box.appendChild(b);
     });
+
+    // 並べ替え
+    var bar = document.getElementById("sortbar");
+    bar.innerHTML = "";
+    bar.appendChild(el("span", "lb", "並び順"));
+    ["新しい順", "古い順"].forEach(function (name) {
+      var b = el("button", "chip" + (sortOrder === name ? " on" : ""), name);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        sortOrder = name;
+        custPage = 0;
+        renderChips();
+        renderCustomers();
+      });
+      bar.appendChild(b);
+    });
   }
 
+  // 案件1件を絞り込みに通すか。
+  // 「未実施あり」はお客様単位の条件なので、案件はすべて出す。
   function matchFilter(k) {
-    if (filter === "すべて") return true;
+    if (filter === "すべて" || filter === "未実施あり") return true;
     if (filter === "結果待ち") return k.status === "確認中";
     return k.status === filter;
+  }
+
+  // お客様1人を絞り込みに通すか。
+  function matchCustomer(c) {
+    if (filter === "未実施あり") return !!(c.todo && c.todo.length);
+    return c.cases.some(matchFilter);
   }
 
   function renderCustomers() {
     var list = document.getElementById("custList");
     list.innerHTML = "";
-    custShown = 0;
     var word = (document.getElementById("q").value || "").trim();
 
     custList = (DATA.customers || []).filter(function (c) {
       if (word && normKey(c.name).indexOf(normKey(word)) < 0) return false;
-      return c.cases.some(matchFilter);
+      return matchCustomer(c);
     });
+
+    // 並べ替え。サーバーは新しい順で返してくるので、古い順のときだけ入れ替える。
+    // **元の配列を壊さない**（DATA.customers は他のタブでも使う）。
+    if (sortOrder === "古い順") custList = custList.slice().reverse();
 
     if (!custList.length) {
       var e2 = el("div", "empty");
       if (word) {
         e2.appendChild(el("div", null, "「" + word + "」に当てはまるお客様は見つかりませんでした。"));
         e2.appendChild(el("div", null, "お名前の一部だけでも探せます。上の欄を空にすると全員出ます。"));
+      } else if (filter === "未実施あり") {
+        e2.appendChild(el("div", null, "まだやっていない案件が残っているお客様はいません。"));
+        e2.appendChild(el("div", null, "いま出ている案件は、担当のお客様が全員お済みです。"));
       } else if (filter !== "すべて") {
         e2.appendChild(el("div", null, "「" + filter + "」のお客様はいません。"));
         e2.appendChild(el("div", null, "上の「すべて」を押すと、担当のお客様が全員出ます。"));
@@ -597,31 +677,59 @@
       return;
     }
 
+    var pages = Math.ceil(custList.length / CUST_STEP);
+    // 絞り込みで人数が減ると、いま見ているページが無くなることがある。**最後のページへ寄せる。**
+    if (custPage > pages - 1) custPage = Math.max(0, pages - 1);
+
+    var from = custPage * CUST_STEP;
+    var to   = Math.min(from + CUST_STEP, custList.length);
+
     if (custList.length > CUST_STEP) {
       list.appendChild(el("div", "listnote",
-        custList.length + " 人います。新しいお客様から順に出しています。" +
+        custList.length + " 人のうち " + (from + 1) + " 〜 " + to + " 人目を出しています。" +
         "お探しの方がいるときは、上の欄にお名前を入れてください。"));
     }
-    appendCustomers();
+
+    for (var i = from; i < to; i++) list.appendChild(custCard(custList[i]));
+
+    if (pages > 1) list.appendChild(pager(pages));
   }
 
-  function appendCustomers() {
-    var list = document.getElementById("custList");
-    var old = document.getElementById("custMore");
-    if (old) old.parentNode.removeChild(old);
+  // ページ切替。数字が多くなりすぎないよう、現在地の前後2つまでを出す。
+  function pager(pages) {
+    var box = el("div", "pager");
 
-    var end = Math.min(custShown + CUST_STEP, custList.length);
-    for (var i = custShown; i < end; i++) list.appendChild(custCard(custList[i]));
-    custShown = end;
-
-    var rest = custList.length - custShown;
-    if (rest > 0) {
-      var b = el("button", "more", "つづきを見る（あと " + rest + " 人）");
-      b.type = "button";
-      b.id = "custMore";
-      b.addEventListener("click", appendCustomers);
-      list.appendChild(b);
+    function jump(p) {
+      custPage = p;
+      renderCustomers();
+      // 押したあとに前のページの途中が見えたままにならないよう、一覧の先頭へ戻す
+      var pane = document.getElementById("paneCust");
+      if (pane && pane.scrollIntoView) pane.scrollIntoView({ block: "start" });
     }
+
+    function btn(label, page, disabled, current) {
+      var b = el("button", current ? "cur" : null, label);
+      b.type = "button";
+      if (disabled) b.disabled = true;
+      else b.addEventListener("click", function () { jump(page); });
+      return b;
+    }
+
+    box.appendChild(btn("前へ", custPage - 1, custPage === 0, false));
+
+    var from = Math.max(0, custPage - 2);
+    var to   = Math.min(pages - 1, custPage + 2);
+    if (from > 0) box.appendChild(btn("1", 0, false, false));
+    if (from > 1) box.appendChild(el("span", "lb", "…"));
+    for (var p = from; p <= to; p++) {
+      box.appendChild(btn(String(p + 1), p, false, p === custPage));
+    }
+    if (to < pages - 2) box.appendChild(el("span", "lb", "…"));
+    if (to < pages - 1) box.appendChild(btn(String(pages), pages - 1, false, false));
+
+    box.appendChild(btn("次へ", custPage + 1, custPage === pages - 1, false));
+    box.appendChild(el("div", "pinfo", pages + " ページ中 " + (custPage + 1) + " ページ目"));
+    return box;
   }
 
   function custCard(c) {
@@ -646,6 +754,24 @@
       row.appendChild(el("div", "badge2 " + cls, text));
       card.appendChild(row);
     });
+
+    // まだやっていない案件。
+    // **いま受け付けている案件だけ**を出す（終了した案件を勧めると、お客様は
+    // 「このキャンペーンは終了しました」の画面に着いてしまう）。
+    // 稼働案件を読めなかったときは todoReady が false になるので、この節ごと出さない。
+    if (todoVisible()) {
+      if (c.todo && c.todo.length) {
+        var todo = el("div", "todo");
+        todo.appendChild(el("div", "todo-t",
+          "まだお済みでない案件が " + c.todo.length + " 件あります"));
+        var tl = el("div", "todo-list");
+        c.todo.forEach(function (nm) { tl.appendChild(el("span", "todo-item", nm)); });
+        todo.appendChild(tl);
+        card.appendChild(todo);
+      } else {
+        card.appendChild(el("div", "todo-done", "いま出ている案件は、すべてお済みです。"));
+      }
+    }
 
     // メモ
     var memo = el("div", "memo");
@@ -1029,7 +1155,12 @@
     TABS.forEach(function (t) {
       document.getElementById(t.tab).addEventListener("click", function () { setTab(t.key); });
     });
-    document.getElementById("q").addEventListener("input", renderCustomers);
+    // 名前で探し直したら1ページ目から見せる。
+    // （3ページ目を見ている途中で検索すると、当たっているのに空に見えることがある）
+    document.getElementById("q").addEventListener("input", function () {
+      custPage = 0;
+      renderCustomers();
+    });
     document.getElementById("reload").addEventListener("click", load);
     load();
   }

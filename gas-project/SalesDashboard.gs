@@ -345,6 +345,24 @@ function sdChecks_(repName, problems) {
   return out;
 }
 
+// 稼働中の案件のうち、その顧客がまだ申し込んでいないものを各顧客へ付ける。
+//
+// **停止した案件は出さない。** 出すと「もう受け付けていないもの」を勧めることになり、
+// 顧客は「このキャンペーンは終了しました」に着地する。営業の信用に直接響く。
+// 稼働の正は案件マスタのチェックボックスなので、そこだけを見る。
+//
+// 案件名の突き合わせは normalizeName で寄せる。案件マスタ側と申請状況一覧側で
+// スペースや全角半角が揺れても、同じ案件を「未実施」に数えないようにするため。
+function sdAttachTodo_(customers, activeCases) {
+  customers.forEach(function (c) {
+    const done = {};
+    c.cases.forEach(function (k) { done[normalizeName(k.caseName)] = true; });
+    c.todo = activeCases
+      .filter(function (a) { return !done[normalizeName(a.name)]; })
+      .map(function (a) { return a.name; });
+  });
+}
+
 function salesDashboardPayload_(token) {
   const rep = sdFindByToken_(token);
   if (!rep) {
@@ -359,6 +377,19 @@ function salesDashboardPayload_(token) {
   const customers = sdCustomers_(rep.name, problems);
   const checks    = sdChecks_(rep.name, problems);
   const thisMonth = formatJST(new Date()).substring(0, 7); // yyyy/MM
+
+  // 稼働中の案件。「この顧客がまだやっていないもの」を出すために使う。
+  // **読めなかったときは todo を付けない。** 付けてしまうと、実際には稼働案件が
+  // あるのに「未実施なし」と読める画面になり、0件と取得不能の区別が付かなくなる。
+  let activeCases = [];
+  let todoReady = false;
+  try {
+    activeCases = listActiveCases_();
+    todoReady = true;
+  } catch (err) {
+    Logger.log("salesDashboardPayload_: 稼働案件を読めませんでした: " + err);
+  }
+  if (todoReady) sdAttachTodo_(customers, activeCases);
 
   let applied = 0, approved = 0, waiting = 0;
   customers.forEach(function (c) {
@@ -383,12 +414,15 @@ function salesDashboardPayload_(token) {
     notice: problems.length
       ? "いま一覧を読み込めませんでした。0件ではなく、システム側の不具合です。事務までご連絡ください。"
       : "",
+    // 未実施の案件を出せる状態か。false のときは画面側もその節を出さない
+    todoReady: todoReady,
     summary: {
       needCheck:      checks.length,
       appliedMonth:   applied,
       approvedMonth:  approved,
       waiting:        waiting,
-      customerCount:  customers.length
+      customerCount:  customers.length,
+      activeCaseCount: activeCases.length
     },
     checks: checks,
     customers: customers
