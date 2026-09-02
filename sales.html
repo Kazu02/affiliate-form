@@ -1011,6 +1011,8 @@
     // ---- 2択 ----
     var OK_LABEL = "このお客様で間違いありません";
     var OK_DESC  = "選んだお客様としてお伝えします。このあと事務が最終の確認をします。";
+    var NEW_LABEL = "一覧にいない（はじめてのお客様です）";
+    var NEW_DESC  = "まだ案件のご利用が無い方など。上のお名前と生年月日で、新しいお客様として登録します。";
     var NG_LABEL = "心当たりがありません";
     var NG_DESC  = "ご自身のお客様ではない場合。事務が引き取ります。";
 
@@ -1019,6 +1021,9 @@
     var okBtn = el("button", "ans ans-ok", OK_LABEL);
     okBtn.type = "button";
     okBtn.appendChild(el("span", "desc", OK_DESC));
+    var newBtn = el("button", "ans ans-redo", NEW_LABEL);
+    newBtn.type = "button";
+    newBtn.appendChild(el("span", "desc", NEW_DESC));
     var ngBtn = el("button", "ans ans-drop", NG_LABEL);
     ngBtn.type = "button";
     ngBtn.appendChild(el("span", "desc", NG_DESC));
@@ -1035,10 +1040,14 @@
       }
       var ask = decision === "approved"
         ? "「" + name + "」様としてお伝えします。よろしいですか。"
-        : "「心当たりがありません」でお伝えします。よろしいですか。";
+        : decision === "new"
+          ? "「" + it.submittedDisplayName + "」様を、はじめてのお客様として登録します。"
+            + "同じ方がすでにお客様一覧にいないか、もう一度お確かめください。よろしいですか。"
+          : "「心当たりがありません」でお伝えします。よろしいですか。";
       if (!window.confirm(ask)) return;
 
       okBtn.disabled = true;
+      newBtn.disabled = true;
       ngBtn.disabled = true;
       // 送っている間に選び直されても送られない。止めておかないと
       // 押した本人は「選び直したほうが届いた」と思ってしまう。
@@ -1058,16 +1067,22 @@
         },
         function () {
           card.innerHTML = "";
-          var done = el("div", "sent", decision === "approved"
-            ? (it.submittedDisplayName + " 様 … 「" + name + "」様としてお伝えしました。ありがとうございます。")
-            : (it.submittedDisplayName + " 様 … 「心当たりがありません」とお伝えしました。"));
+          var done = el("div", "sent",
+            decision === "approved"
+              ? (it.submittedDisplayName + " 様 … 「" + name + "」様としてお伝えしました。ありがとうございます。")
+              : decision === "new"
+                ? (it.submittedDisplayName + " 様 … はじめてのお客様として登録しました。ありがとうございます。")
+                : (it.submittedDisplayName + " 様 … 「心当たりがありません」とお伝えしました。"));
           done.appendChild(el("div", "sentsub",
-            "このあと事務が最終の確認をします。押し間違えたときは、事務までご連絡ください。"));
+            decision === "new"
+              ? "お客様一覧にも追加されました。このあと事務が最終の確認をします。"
+              : "このあと事務が最終の確認をします。押し間違えたときは、事務までご連絡ください。"));
           card.appendChild(done);
           setLineBadge(countLineLeft());
         },
         function (m) {
           okBtn.disabled  = false;
+          newBtn.disabled = false;
           ngBtn.disabled  = false;
           sel.disabled    = false;
           find.disabled   = false;
@@ -1080,9 +1095,11 @@
     }
 
     okBtn.addEventListener("click", function () { send("approved", okBtn, OK_LABEL, OK_DESC); });
+    newBtn.addEventListener("click", function () { send("new", newBtn, NEW_LABEL, NEW_DESC); });
     ngBtn.addEventListener("click", function () { send("rejected", ngBtn, NG_LABEL, NG_DESC); });
 
     wrap.appendChild(okBtn);
+    wrap.appendChild(newBtn);
     wrap.appendChild(ngBtn);
     card.appendChild(wrap);
     card.appendChild(msg);

@@ -142,7 +142,8 @@ function handleSalesLineReview_(data) {
   if (!registrationId || !expectedUpdated) {
     return { result: "error", message: "対象が特定できませんでした。画面を開き直してください。" };
   }
-  if (decision !== "approved" && decision !== "rejected") {
+  // new = 台帳に居ない方。統合アプリ側で、登録時のお名前・生年月日から顧客を作って承認する
+  if (decision !== "approved" && decision !== "rejected" && decision !== "new") {
     return { result: "error", message: "答えの種類が正しくありません。画面を開き直してください。" };
   }
   if (decision === "approved" && !customerId) {
@@ -154,7 +155,7 @@ function handleSalesLineReview_(data) {
   const payload = {
     staff: rep.name,
     registrationId: registrationId,
-    decision: decision,
+    decision: decision === "new" ? "approved_as_new" : decision,
     expectedUpdatedAt: expectedUpdated
   };
   if (decision === "approved") payload.candidateCustomerId = customerId;
@@ -163,7 +164,20 @@ function handleSalesLineReview_(data) {
   if (r.ok) return { result: "ok" };
 
   if (r.reason === "network") return { result: "error", message: SLR_MSG_NETWORK };
-  if (r.status === 409) return { result: "error", message: SLR_MSG_CONFLICT };
+  if (r.status === 409) {
+    // 新規登録は「顧客を作る」と「承認する」の2段構え。顧客だけができた場合は
+    // **作り直させない**（もう一度押されると同じ人が2件できる）。
+    // 開き直せば一覧に出てくるので、選んで承認してもらう。
+    if (r.body && r.body.error === "customer_created_review_failed") {
+      return {
+        result: "error",
+        message: "お客様の登録はできましたが、確認の記録に失敗しました。" +
+                 "「最新の状態にする」を押すと一覧にその方が出てきますので、" +
+                 "選んでから「このお客様で間違いありません」を押してください。"
+      };
+    }
+    return { result: "error", message: SLR_MSG_CONFLICT };
+  }
   if (r.status === 404) {
     // 担当が引き当てられない＝設定の話。対象が見つからない＝先に誰かが答えた。
     // どちらも社内の言い方は出さず、次の動作だけを伝える。
