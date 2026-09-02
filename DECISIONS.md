@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-09-02: ノムコムの「ASPに該当案件なし」88件は異常ではない（放置してよい）
+
+承認漏れの棚卸しで最大の塊はノムコム88件だが、**ASPを経由せず別ルートで承認が確定する
+案件**で、いまはその承認待ち（ユーザー確認）。この仕組みが取り込んでいる成果ログは
+フェアパブリックリレーションズのものだけなので、ノムコムは**構造上ずっと
+「ASPに該当案件なし」のまま残る**。
+
+**次に棚卸しを見る人が「88件の未解決」と読み違えないよう、ここに残す。**
+全体の件数を見るときは88件を差し引いて読む。アイネット証券7件（別ASP `ac.conel.jp`）も
+同じ理由で残るが、こちらは conel のログを取り込めば解消しうる。
+
+案件とASPの対応は、各 `設定_*` タブの「アフィリエイトURL」のホストで判別できる
+（ブック全体を `export?format=xlsx` で取り openpyxl で読む）。2026-09-02 実測で
+29案件中27案件が `ac.fairpublicrelations.jp`、ノムコムのみ `www.nomu.com` 直、
+アイネット証券のみ `ac.conel.jp`。
+
+
 ## 2026-06-12: Adopt File-Based Project Memory
 
 - Decision: Store durable project context in `PROJECT_CONTEXT.md`, `DECISIONS.md`, and `ROADMAP.md`.
