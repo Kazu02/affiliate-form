@@ -261,6 +261,134 @@ function syncCaseMasterAndApply() {
   );
 }
 
+// listCaseSheets_ の実行中キャッシュを捨てる。**設定タブを作った直後は必ず呼ぶ。**
+// 同じ実行の中で先にキャッシュができていると、作ったばかりの案件が案件マスタに載らない。
+function invalidateCaseSheetsCache_() { _caseSheetsCache = null; }
+
+// 案件マスタの「稼働」を書き換える（＝チェックボックスを押すのと同じこと）。
+// **簡易トリガー onEdit はスクリプトの setValue では発火しない。** 表示の切り替えは
+// 呼び出し側で applyCaseVisibility() を続けて実行すること。
+function setCaseActive_(formCode, active) {
+  const code = String(formCode || "").trim();
+  const sh   = getCaseMasterSheet_();
+  const lastRow = sh.getLastRow();
+  if (!code || lastRow < 2) return { found: false };
+
+  const codes = sh.getRange(2, CM_COL_CODE, lastRow - 1, 1).getValues();
+  for (let i = 0; i < codes.length; i++) {
+    if (String(codes[i][0] || "").trim() !== code) continue;
+    const row = i + 2;
+    sh.getRange(row, CM_COL_ACTIVE).setValue(active === true);
+    sh.getRange(row, CM_COL_UPDATED).setValue(formatJST(new Date()));
+    return { found: true, row: row };
+  }
+  return { found: false };
+}
+
+// 取扱案件マトリクスの1案件ぶんを、全代理店まとめて渡す/渡さないにする。
+function setAgencyCaseRow_(caseCode, value) {
+  const code = String(caseCode || "").trim();
+  const sh   = getAgencyCaseMatrixSheet_();
+  const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (!code || lastRow < 2 || lastCol <= ACM_FIXED_COLS) return { found: false, agencies: 0 };
+
+  const codes = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (let i = 0; i < codes.length; i++) {
+    if (String(codes[i][0] || "").trim() !== code) continue;
+    const n = lastCol - ACM_FIXED_COLS;
+    sh.getRange(i + 2, ACM_FIXED_COLS + 1, 1, n).setValue(value === true);
+    return { found: true, agencies: n };
+  }
+  return { found: false, agencies: 0 };
+}
+
+// =============================================
+// 新規案件の後処理（2026-09-05 追加）
+//
+// **「新規フォーム作成」1回で、案件マスタから各シートの案件列まで通す。**
+// それまでは 03_運用/新規案件の追加手順.md のとおり人がメニューを6つ順に押していたが、
+// アコムで2番目（案件マスタを同期）が押されないまま残り、案件マスタに行が無いので
+// どこにも出てこない状態になった。押し忘れが起きるなら手順ではなく仕組みで塞ぐ。
+//
+// **UI を呼ばない。** 作成ダイアログが開いたまま走るので、ここで alert を出すと
+// ダイアログが差し替わって結果が読めなくなる。結果は戻り値でダイアログへ返す。
+//
+// **各段は独立して try/catch する。** フォーム自体はもう作られているので、後段が
+// 失敗しても作成をなかったことにはできない。どこで転んだかを見せて、その1つだけを
+// 人がメニューから押し直せるようにする。
+//
+// 申請状況一覧の作り直しはここでは行わない（重く、日次トリガーで作り直されるため）。
+// =============================================
+function finalizeNewCase_(formCode, options) {
+  const opts     = options || {};
+  const activate = opts.activate       !== false;   // 既定＝稼働ON
+  const toAgency = opts.giveToAgencies !== false;   // 既定＝代理店へ渡す
+  const steps    = [];
+
+  function step(label, fn) {
+    try {
+      const detail = fn();
+      steps.push({ label: label, ok: true, detail: String(detail == null ? "" : detail) });
+    } catch (e) {
+      steps.push({ label: label, ok: false, detail: String((e && e.message) || e) });
+    }
+  }
+
+  invalidateCaseSheetsCache_();   // 作ったばかりのタブを確実に拾う
+
+  step("案件マスタを同期", function () {
+    return "案件 " + syncCaseMaster().count + " 件";
+  });
+
+  if (activate) {
+    step("稼働をONにする", function () {
+      const r = setCaseActive_(formCode, true);
+      if (!r.found) throw new Error("案件マスタに「" + formCode + "」の行が見つかりません");
+      return "案件マスタ " + r.row + " 行目";
+    });
+  } else {
+    steps.push({ label: "稼働をONにする", ok: true, detail: "指定によりスキップ（稼働OFFのまま）" });
+  }
+
+  step("設定タブの表示を反映", function () {
+    const r = applyCaseVisibility();
+    return "表示 " + r.shown.length + " 件 / 非表示 " + r.hidden.length + " 件";
+  });
+
+  // マトリクスは稼働中の案件しか行を持たない。稼働OFFなら行自体ができないので触らない。
+  if (activate) {
+    step("代理店別の取扱案件を同期", function () {
+      const r = syncAgencyCaseMatrix();
+      if (r.agencies === 0) return "稼働中の代理店が無いため列なし";
+      if (toAgency) return "代理店 " + r.agencies + " 件へ「渡す」";
+      // **行を作ってから false を書く。** 同期しないまま放置すると、次に誰かが
+      // メニューを押したときに「新しい組み合わせ＝渡す」で勝手に配られる。
+      const s = setAgencyCaseRow_(formCode, false);
+      return "代理店 " + r.agencies + " 件すべて「渡さない」" + (s.found ? "" : "（行が見つからず未設定）");
+    });
+  }
+
+  step("SS2の案件列を同期", function () {
+    const r = ensureRepStatusCaseColumns_();
+    if (r.error) throw new Error(r.error);
+    const names = Object.keys(r.added || {});
+    return names.length ? names.length + " タブへ追加" : "既に揃っている";
+  });
+
+  step("顧客管理の案件列を同期", function () {
+    const r = ensureCustomerManagementCases_();
+    if (r.error) throw new Error(r.error);
+    return r.addedTotal ? r.addedTotal + " 列追加" : "既に揃っている";
+  });
+
+  return {
+    activated:      activate,
+    gaveToAgencies: activate && toAgency,
+    steps:          steps,
+    failed:         steps.filter(function (s) { return !s.ok; }).length
+  };
+}
+
 function applyCaseVisibilityFromMenu() {
   const r = applyCaseVisibility();
   SpreadsheetApp.getUi().alert(

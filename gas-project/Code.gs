@@ -2188,7 +2188,7 @@ function testLineNotification() {
 function showCreateFormDialog() {
   const html = HtmlService.createHtmlOutputFromFile("dialog")
     .setWidth(480)
-    .setHeight(420);
+    .setHeight(620);
   SpreadsheetApp.getUi().showModalDialog(html, "新規フォーム作成");
 }
 
@@ -2258,10 +2258,22 @@ function createFormFromDialog(data) {
   // メインSSの管理シート更新
   updateManagementSheet();
 
+  // **ここから先は、手順書のメニューを人が順に押していた部分（03_運用/新規案件の追加手順.md）。**
+  // 押し忘れると案件マスタに行ができず、案件がどこにも出てこない（アコムで実際に起きた）。
+  // 代理店コード付きフォームは案件マスタ・顧客管理・SS2のいずれも対象外なので走らせない。
+  const isJishaForm = !agencyCode || agencyCode === AGENCY_DEFAULT;
+  const setup = isJishaForm
+    ? finalizeNewCase_(formCode, {
+        activate:       data.activate       !== false,
+        giveToAgencies: data.giveToAgencies !== false
+      })
+    : { skipped: "代理店専用フォームのため、案件マスタ以降の同期は行いません。", steps: [], failed: 0 };
+
   return {
     formCode: formCode,
     formDisplayName: formDisplayName,
-    formUrl: FORM_BASE_URL + "?form=" + encodeURIComponent(formCode)
+    formUrl: FORM_BASE_URL + "?form=" + encodeURIComponent(formCode),
+    setup: setup
   };
 }
 
@@ -2723,18 +2735,14 @@ function addCaseColumnToSheet_(sheet, col, caseName) {
   );
 }
 
-// ---- 顧客管理シートに不足している案件列を同期追加（メニュー実行）----
-function syncCustomerManagementCases() {
+// ---- 顧客管理シートに不足している案件列を同期追加（コア。UIを呼ばない）----
+// 新規フォーム作成ダイアログからも呼ぶので、ここで alert を出さない（ダイアログが差し替わる）。
+function ensureCustomerManagementCases_() {
   const css = getCustomerManagementSS();
-  if (!css) {
-    SpreadsheetApp.getUi().alert("顧客管理シートが見つかりません。先に「顧客管理シートを作成」を実行してください。");
-    return;
-  }
+  if (!css) return { error: "顧客管理シートが見つかりません。先に「顧客管理シートを作成」を実行してください。" };
+
   const CASE_NAMES = getJishaForms().map(f => f.displayName);
-  if (CASE_NAMES.length === 0) {
-    SpreadsheetApp.getUi().alert("自社フォーム（案件）が見つかりませんでした。");
-    return;
-  }
+  if (CASE_NAMES.length === 0) return { error: "自社フォーム（案件）が見つかりませんでした。" };
 
   let addedTotal = 0;
   const details  = [];
@@ -2753,10 +2761,17 @@ function syncCustomerManagementCases() {
     details.push(sheet.getName() + ": +" + missing.length + "列（" + missing.join("、") + "）");
   });
 
+  return { addedTotal: addedTotal, details: details };
+}
+
+// ---- 同上（メニュー実行）----
+function syncCustomerManagementCases() {
+  const r = ensureCustomerManagementCases_();
+  if (r.error) { SpreadsheetApp.getUi().alert(r.error); return; }
   SpreadsheetApp.getUi().alert(
-    addedTotal === 0
+    r.addedTotal === 0
       ? "すべての案件列は最新です。追加はありません。"
-      : "案件列を同期しました。\n追加列数: " + addedTotal + "\n\n" + details.join("\n")
+      : "案件列を同期しました。\n追加列数: " + r.addedTotal + "\n\n" + r.details.join("\n")
   );
 }
 
