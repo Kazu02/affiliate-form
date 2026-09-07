@@ -218,6 +218,12 @@ function doPost(e) {
       return handleLineWebhook(data);
     }
 
+    // 顧客向け公式LINEのリッチメニューを組み立てるための読み取り（CustomerMenu.gs）。
+    // 署名の検証・秘密値の有無・多重送信の判定はすべて向こうで行う。**読み取りだけ。**
+    if (data.action === "customerMenuSnapshot") {
+      return handleCustomerMenuSnapshot_(data);
+    }
+
     // アフィリエイトボタンが押された知らせ。**サーバー側の時刻を記録するためだけ。**
     // 端末時計のずれで突合が48%しか当たらない問題への対処（ClickLog.gs 参照）。
     // ここで失敗しても申請そのものには影響しない。
