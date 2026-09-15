@@ -224,6 +224,19 @@ function doPost(e) {
       return handleCustomerMenuSnapshot_(data);
     }
 
+    // 顧客の動きをアフィリエイト報告用のグループへ知らせる（CustomerNotify.gs）。
+    // 通知先のグループにいるのは「市場作り管理BOT」なので、顧客向け公式アカウントからは
+    // 出せない。**送信の実体は notifyLineGroup()** で、トークンとグループIDはプロパティにある。
+    if (data.action === "customerLineNotify") {
+      return handleCustomerLineNotify_(data);
+    }
+
+    // 案件の稼働/停止を外から切り替える（CaseStatusOps.gs）。LINE の停止/再開連絡を読む
+    // 監視が叩く。**案件マスタの「稼働」チェックを押すのと同じことしかしない。**
+    if (data.action === "caseStatus") {
+      return handleCaseStatus_(data);
+    }
+
     // アフィリエイトボタンが押された知らせ。**サーバー側の時刻を記録するためだけ。**
     // 端末時計のずれで突合が48%しか当たらない問題への対処（ClickLog.gs 参照）。
     // ここで失敗しても申請そのものには影響しない。
