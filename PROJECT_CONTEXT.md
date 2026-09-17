@@ -66,6 +66,13 @@
 
 ## Architecture And Operations
 
+### 案件の再開とリンク集への再掲載
+
+稼働の正本は案件マスタ。再開時はフォームの `suspended:false` と顧客LINEの反映に加え、
+代理店別取扱案件と実際のリンク集を確認する。停止中に行が外れている場合、稼働を戻すだけでは
+リンク集に載らない。既存 `syncAgencyCaseMatrix()` で掲載設定を同期し、従来の選択を保持したことを照合する。
+2026-09-17のdoda再開で実測済み。URL・条件の変更や追加送信とは分けて扱う。
+
 ### GAS Web App
 
 - Script ID: `1OqsufxjJqAfj0nvAmE20miZCMlZ5BCI0WxSElMuAqkpwMUt6YuWCPgM4`
