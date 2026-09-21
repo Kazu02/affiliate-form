@@ -34,6 +34,12 @@ const AM_COL_STATUS = 6; // 状態（稼働/停止）
 const AM_COL_REGAT  = 7; // 登録日時
 const AM_COL_LINKS  = 8; // リンク集URL
 const AM_HEADERS = ["代理店コード", "代理店名", "担当者名", "メールアドレス", "トークン", "状態", "登録日時", "リンク集URL"];
+// 追加項目はヘッダー名で扱い、既存8列と運用で追加された列の位置を変えない。
+const AM_REFERRING_AGENCY_HEADER = "紹介元の代理店";
+const AM_REFERRING_AGENCY_MAX_LENGTH = 200;
+const AM_SALES_REP_HEADER = "担当営業";
+const AM_PARENT_CODE_HEADER = "上位代理店コード";
+const AM_MAX_DEPTH = 5; // 本人を1階層目と数える
 
 const AGENCY_STATUS_ACTIVE = "稼働";
 const AGENCY_STATUS_STOP   = "停止";
@@ -422,12 +428,62 @@ function getAgencyMasterSheet_() {
   return sh;
 }
 
-function readAgencies_() {
-  const sh = getAgencyMasterSheet_();
+// 登録時だけ不足列を末尾へ追加する。リンク集などの読み取りでは作成しない。
+function agencyReferringColumn_(sh, create) {
+  return agencyExtraColumn_(sh, AM_REFERRING_AGENCY_HEADER, create);
+}
+
+function agencyExtraColumn_(sh, header, create) {
+  const width = Math.max(AM_HEADERS.length, sh.getLastColumn());
+  const headers = sh.getRange(1, 1, 1, width).getValues()[0];
+  const index = headers.indexOf(header);
+  if (index >= 0) return index + 1;
+  if (!create) return 0;
+
+  const col = width + 1;
+  if (col > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), col - sh.getMaxColumns());
+  sh.getRange(1, col).setValue(header)
+    .setFontWeight("bold").setBackground("#0f766e").setFontColor("#ffffff");
+  sh.setColumnWidth(col, 240);
+  return col;
+}
+
+// 初回反映時にエディタから実行可。登録時にも同じ不足列チェックを行う。
+function ensureAgencyTreeColumns() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const sh = getAgencyMasterSheet_();
+    return {
+      salesRep: agencyExtraColumn_(sh, AM_SALES_REP_HEADER, true),
+      parentCode: agencyExtraColumn_(sh, AM_PARENT_CODE_HEADER, true)
+    };
+  } finally { agencyReleaseLock_(lock); }
+}
+
+function agencyReleaseLock_(lock) {
+  // 採番・親の検証から書き込みの反映までを同じロックで守る。
+  try { SpreadsheetApp.flush(); }
+  finally { lock.releaseLock(); }
+}
+
+function agencyReadSpreadsheet_() {
+  const id = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
+  if (!id) throw new Error("スプレッドシートが未設定です。");
+  // getOrCreateSpreadsheet は接続失敗時に新規作成するため、読み取り口では使わない。
+  return SpreadsheetApp.openById(id);
+}
+
+function readAgencies_(readOnly) {
+  const sh = readOnly ? agencyReadSpreadsheet_().getSheetByName(AGENCY_MASTER_SHEET) : getAgencyMasterSheet_();
   const out = [];
+  if (!sh) return out;
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return out;
-  sh.getRange(2, 1, lastRow - 1, AM_HEADERS.length).getValues().forEach(function (r, i) {
+  const referringCol = agencyReferringColumn_(sh, false);
+  const salesCol = agencyExtraColumn_(sh, AM_SALES_REP_HEADER, false);
+  const parentCol = agencyExtraColumn_(sh, AM_PARENT_CODE_HEADER, false);
+  sh.getRange(2, 1, lastRow - 1, Math.max(AM_HEADERS.length, referringCol, salesCol, parentCol)).getValues().forEach(function (r, i) {
     const code = String(r[AM_COL_CODE - 1] || "").trim();
     if (!code) return;
     out.push({
@@ -438,10 +494,175 @@ function readAgencies_() {
       email:  String(r[AM_COL_EMAIL - 1] || "").trim(),
       token:  String(r[AM_COL_TOKEN - 1] || "").trim(),
       status: String(r[AM_COL_STATUS - 1] || "").trim(),
-      links:  String(r[AM_COL_LINKS - 1] || "").trim()
+      links:  String(r[AM_COL_LINKS - 1] || "").trim(),
+      referringAgency: referringCol ? String(r[referringCol - 1] || "").trim() : "",
+      salesRep: salesCol ? String(r[salesCol - 1] || "").trim() : "",
+      parentCode: parentCol ? String(r[parentCol - 1] || "").trim() : "",
+      registeredAt: r[AM_COL_REGAT - 1]
     });
   });
   return out;
+}
+
+function agencySalesRepOptions_() {
+  return JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+function agencyValidateSalesRep_(name) {
+  if (agencySalesRepOptions_().indexOf(name) < 0) throw new Error("担当営業を名簿から選択してください。");
+}
+
+// 親の検証は必ず保存前に行う。既存代理店を移す場合は子孫の深さも検査する。
+function agencyValidateParent_(code, parentCode, agencies) {
+  const byCode = Object.create(null), children = Object.create(null);
+  agencies.forEach(function (a) { byCode[a.code] = a; });
+  if (code === parentCode) throw new Error("自分自身を上位代理店にすることはできません。");
+  let depth = 1, cursor = parentCode;
+  const visited = Object.create(null);
+  visited[code] = true;
+  while (cursor) {
+    if (visited[cursor]) throw new Error("代理店の親子関係が循環するため保存できません。");
+    visited[cursor] = true;
+    if (!byCode[cursor]) throw new Error("上位代理店コードが見つかりません。");
+    if (++depth > AM_MAX_DEPTH) throw new Error("代理店の系図は5階層までです。");
+    cursor = byCode[cursor].parentCode;
+  }
+  agencies.forEach(function (a) {
+    if (a.code !== code && a.parentCode) (children[a.parentCode] || (children[a.parentCode] = [])).push(a.code);
+  });
+  function checkChildren(current, level) {
+    (children[current] || []).forEach(function (child) {
+      if (visited[child]) throw new Error("代理店の親子関係が循環するため保存できません。");
+      if (level + 1 > AM_MAX_DEPTH) throw new Error("子孫を含めて代理店の系図は5階層までです。");
+      visited[child] = true;
+      checkChildren(child, level + 1);
+    });
+  }
+  checkChildren(code, depth);
+}
+
+// 管理者が既存代理店を補完・移動する入口。公開actionは作らない。
+function setAgencyRelationship(code, salesRep, parentCode) {
+  code = String(code || "").trim();
+  salesRep = String(salesRep || "").trim();
+  parentCode = String(parentCode || "").trim();
+  agencyValidateSalesRep_(salesRep);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const agencies = readAgencies_(true);
+    const agency = agencies.filter(function (a) { return a.code === code; })[0];
+    if (!agency) throw new Error("代理店コードが見つかりません。");
+    agencyValidateParent_(code, parentCode, agencies);
+    const sh = getAgencyMasterSheet_();
+    const salesCol = agencyExtraColumn_(sh, AM_SALES_REP_HEADER, true);
+    const parentCol = agencyExtraColumn_(sh, AM_PARENT_CODE_HEADER, true);
+    sh.getRange(agency.row, salesCol).setValue(salesRep);
+    sh.getRange(agency.row, parentCol).setValue(parentCode);
+    return { code: code, salesRep: salesRep, parentCode: parentCode || null };
+  } finally { agencyReleaseLock_(lock); }
+}
+
+// 公開フォームには名簿と、指定された有効な1件の名前だけを返す。
+function agencyRegistrationPayload_(parentCode) {
+  const code = String(parentCode || "").trim();
+  const parent = code ? readAgencies_(true).filter(function (a) {
+    return a.code === code && a.status === AGENCY_STATUS_ACTIVE;
+  })[0] : null;
+  return { salesReps: agencySalesRepOptions_(), parentName: parent ? parent.name : null };
+}
+
+// 申請状況一覧の既存列だけを読む。コード表記も受け付け、過去の名前表記は
+// 同名なら紹介者名（代理店の担当者名）も一致する1件に限って割り当てる。
+// 同名・同担当で区別不能な行を双方へ加算したり、先頭の代理店へ寄せたりしない。
+function agencyDateMillis_(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(text)) return aspToMillis_(text + " 00:00:00");
+  if (/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(text)) return Date.parse(text) || 0;
+  return aspToMillis_(value);
+}
+
+function agencyApplicationStats_(agencies, month) {
+  const byCode = Object.create(null), byName = Object.create(null), counts = Object.create(null);
+  const sales = Object.create(null);
+  agencySalesRepOptions_().forEach(function (name) { sales[name] = { name: name, applications: 0, approved: 0 }; });
+  agencies.forEach(function (a) {
+    if (byCode[a.code]) throw new Error("代理店コードが重複しています。");
+    byCode[a.code] = a;
+    (byName[a.name] || (byName[a.name] = [])).push(a);
+    counts[a.code] = { applications: 0, approved: 0, ambiguous: false };
+  });
+  const sh = agencyReadSpreadsheet_().getSheetByName(APP_STATUS_SHEET);
+  if (!sh) throw new Error("申請状況一覧が見つかりません。");
+  const width = sh.getLastColumn();
+  if (!width) throw new Error("申請状況一覧のヘッダーがありません。");
+  const headers = sh.getRange(1, 1, 1, width).getValues()[0];
+  const cols = {};
+  ["受信日時", "案件名", "顧客名", "紹介者名", "代理店", "承認"].forEach(function (name) {
+    cols[name] = headers.indexOf(name);
+    if (cols[name] < 0) throw new Error("申請状況一覧の列がありません: " + name);
+  });
+  const rows = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
+  let ambiguous = 0;
+  const unassigned = { name: "担当未設定", applications: 0, approved: 0 };
+  rows.forEach(function (r) {
+    if (!String(r[cols["顧客名"]] || "").trim() || !String(r[cols["案件名"]] || "").trim()) return;
+    const ms = agencyDateMillis_(r[cols["受信日時"]]);
+    if (month && (!ms || formatJST(new Date(ms)).substring(0, 7) !== month)) return;
+    const label = String(r[cols["代理店"]] || "").trim();
+    const ref = String(r[cols["紹介者名"]] || "").trim();
+    let candidates = byCode[label] ? [byCode[label]] : (byName[label] || []);
+    if (candidates.length > 1) {
+      const matches = candidates.filter(function (a) { return a.person && normalizeName(a.person) === normalizeName(ref); });
+      if (matches.length === 1) candidates = matches;
+    }
+    const agency = candidates.length === 1 ? candidates[0] : null;
+    const approved = getAdvertiserApprovalFlags(r[cols["承認"]]).approved;
+    if (candidates.length > 1) {
+      ambiguous++;
+      candidates.forEach(function (a) { counts[a.code].ambiguous = true; });
+    }
+    if (agency) {
+      counts[agency.code].applications++;
+      if (approved) counts[agency.code].approved++;
+    }
+    // 代理店に担当が設定されていればそれを優先。子孫の数字を祖先へ重複加算しない。
+    const rep = agency && agency.salesRep ? agency.salesRep : sdCanonRep_(ref);
+    const total = sales[rep] || unassigned;
+    total.applications++;
+    if (approved) total.approved++;
+  });
+  const salesTotals = agencySalesRepOptions_().map(function (name) { return sales[name]; });
+  if (unassigned.applications) salesTotals.push(unassigned);
+  return { counts: counts, salesTotals: salesTotals, ambiguous: ambiguous };
+}
+
+// 読み取り専用。**合言葉の確認はここでは行わない**（doPost の入口で
+// customerMenuVerifyRequest_ が本文の合言葉を確かめてから呼ぶ）。
+// 鍵をこの関数の引数で受けていた頃は、URLのクエリに秘密値が載っていた。
+function agencyTreePayload_() {
+  try {
+    if (!agencyReadSpreadsheet_().getSheetByName(AGENCY_MASTER_SHEET)) throw new Error("代理店マスタがありません。");
+    const agencies = readAgencies_(true);
+    const stats = agencyApplicationStats_(agencies, ""); // APIは全期間・直接分のみ
+    if (stats.ambiguous) return { ok: false, status: 422, error: "agency_attribution_ambiguous" };
+    return {
+      ok: true,
+      generatedAt: formatJST(new Date()),
+      agencies: agencies.map(function (a) {
+        const ms = agencyDateMillis_(a.registeredAt);
+        return {
+          code: a.code, name: a.name, contact: a.person, salesRep: a.salesRep,
+          parentCode: a.parentCode || null, status: a.status,
+          registeredOn: ms ? formatJST(new Date(ms)).substring(0, 10) : "",
+          applications: stats.counts[a.code].applications, approved: stats.counts[a.code].approved
+        };
+      })
+    };
+  } catch (err) {
+    Logger.log("agencyTree: " + err);
+    return { ok: false, status: 503, error: "agency_tree_unavailable" };
+  }
 }
 
 function findAgencyByCode_(code) {
@@ -473,6 +694,13 @@ function nextAgencyCode_() {
 
 function agencyLinksUrl_(token) {
   return AGENCY_LINKS_PAGE + "?t=" + encodeURIComponent(token);
+}
+
+function agencyReferralUrl_(code) {
+  const key = agencySignupKey_();
+  if (!key) return "";
+  return AGENCY_LINKS_PAGE.replace(/links\.html$/, "agency.html") + "?parent=" + encodeURIComponent(code)
+    + "&k=" + encodeURIComponent(key);
 }
 
 // 代理店1件の「稼働中案件リンク一式」を組み立てる。
@@ -523,39 +751,87 @@ function registerAgency_(data, fromForm) {
   const name   = String((data && data.agencyName)   || "").trim();
   const person = String((data && data.personName)   || "").trim();
   const email  = String((data && data.email)        || "").trim();
+  const salesRep = String((data && data.salesRep) || "").trim();
+  const requestedParent = String((data && data.parentCode) || "").trim();
+  const referringValue = data && data.referringAgency;
+  if (referringValue != null && typeof referringValue !== "string") {
+    throw new Error("紹介元の代理店は代理店名を入力してください。");
+  }
+  const referringAgency = (referringValue || "").trim();
 
   if (!name)   throw new Error("会社名（代理店名）を入力してください。");
   if (!person) throw new Error("担当者名を入力してください。");
   if (!isValidEmail_(email)) throw new Error("メールアドレスの形式が正しくありません。");
-
-  const sh = getAgencyMasterSheet_();
-  const existing = readAgencies_().filter(function (a) {
-    return a.email.toLowerCase() === email.toLowerCase();
-  })[0];
+  agencyValidateSalesRep_(salesRep);
+  if (referringAgency.length > AM_REFERRING_AGENCY_MAX_LENGTH) {
+    throw new Error("紹介元の代理店は200文字以内で入力してください。");
+  }
 
   let agency;
-  if (existing) {
-    // 既存の再送。トークンが無ければ発行する。
-    agency = existing;
-    if (!agency.token) {
-      agency.token = Utilities.getUuid().replace(/-/g, "");
-      sh.getRange(agency.row, AM_COL_TOKEN).setValue(agency.token);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const sh = getAgencyMasterSheet_();
+    const agencies = readAgencies_();
+    const existing = agencies.filter(function (a) {
+      return a.email.toLowerCase() === email.toLowerCase();
+    })[0];
+    const code = existing ? existing.code : nextAgencyCode_();
+    if (existing && requestedParent === code) throw new Error("自分自身を上位代理店にすることはできません。");
+    // 未知・無効・停止中の紹介URLは親なしとして扱う。名前から親を推測しない。
+    const parent = agencies.filter(function (a) {
+      return a.code === requestedParent && a.status === AGENCY_STATUS_ACTIVE;
+    })[0];
+    const parentCode = parent ? parent.code : "";
+    agencyValidateParent_(code, parentCode, agencies);
+    const savedParent = existing && existing.parentCode ? existing.parentCode : parentCode;
+    agencyValidateParent_(code, savedParent, agencies);
+    const referringCol = agencyReferringColumn_(sh, true);
+    const salesCol = agencyExtraColumn_(sh, AM_SALES_REP_HEADER, true);
+    const parentCol = agencyExtraColumn_(sh, AM_PARENT_CODE_HEADER, true);
+
+    if (existing) {
+      // 既存の再送。トークンが無ければ発行する。
+      agency = existing;
+      // 再送で登録済みの担当・親は変えない。未設定の欄だけ補完する。
+      if (!agency.salesRep) {
+        sh.getRange(agency.row, salesCol).setValue(salesRep);
+        agency.salesRep = salesRep;
+      }
+      if (!agency.parentCode && parentCode) {
+        sh.getRange(agency.row, parentCol).setValue(parentCode);
+        agency.parentCode = parentCode;
+      }
+      // 未登録の紹介元だけ補完する。再送・旧フォームの空欄で保存済みの値を消さない。
+      if (!agency.referringAgency && referringAgency) {
+        sh.getRange(agency.row, referringCol).setValue("'" + referringAgency);
+        agency.referringAgency = referringAgency;
+      }
+      if (!agency.token) {
+        agency.token = Utilities.getUuid().replace(/-/g, "");
+        sh.getRange(agency.row, AM_COL_TOKEN).setValue(agency.token);
+      }
+      agency.links = agencyLinksUrl_(agency.token);
+      sh.getRange(agency.row, AM_COL_LINKS).setValue(agency.links);
+      if (agency.status !== AGENCY_STATUS_ACTIVE) {
+        sh.getRange(agency.row, AM_COL_STATUS).setValue(AGENCY_STATUS_ACTIVE);
+        agency.status = AGENCY_STATUS_ACTIVE;
+      }
+    } else {
+      const token = Utilities.getUuid().replace(/-/g, "");
+      const links = agencyLinksUrl_(token);
+      const row = [code, name, person, email, token, AGENCY_STATUS_ACTIVE, formatJST(new Date()), links];
+      while (row.length < Math.max(referringCol, salesCol, parentCol)) row.push("");
+      // = で始まる名前も数式にせず、入力された文字列として保存する。
+      row[referringCol - 1] = referringAgency ? "'" + referringAgency : "";
+      row[salesCol - 1] = salesRep;
+      row[parentCol - 1] = parentCode;
+      sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+      agency = { code: code, name: name, person: person, email: email, token: token,
+                 status: AGENCY_STATUS_ACTIVE, links: links, referringAgency: referringAgency,
+                 salesRep: salesRep, parentCode: parentCode };
     }
-    agency.links = agencyLinksUrl_(agency.token);
-    sh.getRange(agency.row, AM_COL_LINKS).setValue(agency.links);
-    if (agency.status !== AGENCY_STATUS_ACTIVE) {
-      sh.getRange(agency.row, AM_COL_STATUS).setValue(AGENCY_STATUS_ACTIVE);
-      agency.status = AGENCY_STATUS_ACTIVE;
-    }
-  } else {
-    const code  = nextAgencyCode_();
-    const token = Utilities.getUuid().replace(/-/g, "");
-    const links = agencyLinksUrl_(token);
-    const row = [code, name, person, email, token, AGENCY_STATUS_ACTIVE, formatJST(new Date()), links];
-    sh.getRange(sh.getLastRow() + 1, 1, 1, AM_HEADERS.length).setValues([row]);
-    agency = { code: code, name: name, person: person, email: email, token: token,
-               status: AGENCY_STATUS_ACTIVE, links: links };
-  }
+  } finally { agencyReleaseLock_(lock); }
 
   // 代理店の顧客も一元管理するため、顧客管理SSに担当者タブを用意する。
   try { ensureAgencyCustomerTab_(agency.person); }
@@ -581,6 +857,10 @@ function registerAgency_(data, fromForm) {
     result: "success",
     agencyCode: agency.code,
     linksUrl: agency.links,
+    referringAgency: agency.referringAgency,
+    salesRep: agency.salesRep,
+    parentName: agency.parentCode ? (findAgencyByCode_(agency.parentCode) || {}).name || null : null,
+    referralUrl: agencyReferralUrl_(agency.code),
     caseCount: cases.length,
     mailSent: mailSent,
     mailError: mailError
@@ -663,11 +943,18 @@ function showAgencyRegisterPrompt() {
   if (b.getSelectedButton() !== ui.Button.OK) return;
   const c = ui.prompt("代理店登録 (3/3)", "メールアドレスを入力してください。", ui.ButtonSet.OK_CANCEL);
   if (c.getSelectedButton() !== ui.Button.OK) return;
+  const roster = agencySalesRepOptions_();
+  const d = ui.prompt("代理店登録・担当営業", roster.map(function (name, i) {
+    return (i + 1) + ": " + name;
+  }).join("\n") + "\n担当営業の番号を選んで入力してください。", ui.ButtonSet.OK_CANCEL);
+  if (d.getSelectedButton() !== ui.Button.OK) return;
+  const choice = String(d.getResponseText()).trim();
   try {
     const res = registerAgency_({
       agencyName: a.getResponseText(),
       personName: b.getResponseText(),
-      email:      c.getResponseText()
+      email:      c.getResponseText(),
+      salesRep:   /^\d+$/.test(choice) ? roster[Number(choice) - 1] || "" : ""
     });
     ui.alert(
       "代理店を登録しました。\n\n" +
@@ -724,6 +1011,17 @@ function ensureAgencyColumnOnAllSheets() {
   return added;
 }
 
+// メニューから1回押せば、代理店マスタに「担当営業」「上位代理店コード」の列ができる。
+// 既存の列位置は動かさず、足りないぶんだけ末尾へ足す。二度押しても増えない。
+function ensureAgencyTreeColumnsFromMenu() {
+  const columns = ensureAgencyTreeColumns();
+  SpreadsheetApp.getUi().alert([
+    "代理店マスタに「担当営業」「上位代理店コード」の列を用意しました。",
+    "担当営業: " + columns.salesRep + " 列目 / 上位代理店コード: " + columns.parentCode + " 列目",
+    "既存の代理店の担当・紹介元は、setAgencyRelationship で1件ずつ入れてください。"
+  ].join("\n\n"));
+}
+
 function ensureAgencyColumnFromMenu() {
   const added = ensureAgencyColumnEverywhere_();
   SpreadsheetApp.getUi().alert("「代理店」列を追加しました。\n\n追加: " + added.length + " シート");
@@ -763,6 +1061,7 @@ function agencyLinksPayload_(token) {
   return {
     agencyName: agency.name,
     personName: agency.person,
+    referralUrl: agencyReferralUrl_(agency.code),
     cases: cases,
     totalCount: total,
     updatedAt: formatJST(new Date())

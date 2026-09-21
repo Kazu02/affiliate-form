@@ -21,11 +21,11 @@
   .group { margin-bottom: 18px; }
   label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
   .req { color: #dc2626; margin-left: 4px; }
-  input[type=text], input[type=email] {
+  input[type=text], input[type=email], select {
     width: 100%; padding: 11px 12px; font-size: 1rem; font-family: inherit;
     border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a;
   }
-  input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+  input:focus, select:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
   .hint { margin-top: 5px; font-size: .76rem; color: #94a3b8; }
 
   button {
@@ -74,20 +74,36 @@
         <input type="text" id="personName" name="personName" autocomplete="name">
         <div class="hint">申請の紹介者名としてこのお名前が記録されます。</div>
       </div>
+      <div class="group hidden" id="parentInfo" role="status"></div>
       <div class="group">
         <label for="email">メールアドレス<span class="req">*</span></label>
         <input type="email" id="email" name="email" autocomplete="email" inputmode="email">
         <div class="hint">こちらへ専用リンク集のURLをお送りします。</div>
       </div>
-      <button type="submit" id="submitBtn">登録してリンク集を受け取る</button>
+      <div class="group">
+        <label for="salesRep">担当営業<span class="req">*</span></label>
+        <select id="salesRep" name="salesRep" required disabled>
+          <option value="">名簿を読み込んでいます...</option>
+        </select>
+      </div>
+      <div class="group" id="legacyReferralGroup">
+        <label for="referringAgency">紹介元の代理店（任意）</label>
+        <input type="text" id="referringAgency" name="referringAgency" maxlength="200" aria-describedby="referringAgencyHint">
+        <div class="hint" id="referringAgencyHint">紹介してもらった代理店名を入力してください。</div>
+      </div>
+      <button type="submit" id="submitBtn" disabled>登録してリンク集を受け取る</button>
     </form>
   </div>
 
   <div class="card done" id="doneCard">
     <div class="title">登録が完了しました</div>
     <div class="body" id="doneBody"></div>
+    <div class="body hidden" id="doneReferringAgency"></div>
     <a class="links" id="linksBtn" href="#" target="_blank" rel="noopener">専用リンク集を開く</a>
     <div class="raw" id="linksRaw"></div>
+    <div class="body hidden" id="doneReferralUrl" style="margin-top:20px">
+      代理店を紹介するURL<br><a id="referralLink" class="raw" target="_blank" rel="noopener noreferrer"></a>
+    </div>
   </div>
 </div>
 
@@ -97,6 +113,36 @@
   "use strict";
 
   var SIGNUP_KEY = (new URLSearchParams(window.location.search).get("k") || "").trim();
+  var PARENT_CODE = (new URLSearchParams(window.location.search).get("parent") || "").trim();
+  var salesReps = [];
+
+  function loadRegistration() {
+    if (PARENT_CODE) document.getElementById("legacyReferralGroup").classList.add("hidden");
+    if (typeof CONFIG === "undefined" || !CONFIG.gasUrl) {
+      showError("設定の読み込みに失敗しました。時間をおいて再度お試しください。"); return;
+    }
+    fetch(CONFIG.gasUrl + "?action=agencyRegistration&parent=" + encodeURIComponent(PARENT_CODE))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || !Array.isArray(data.salesReps) || !data.salesReps.length) throw new Error("名簿取得失敗");
+        salesReps = data.salesReps;
+        var select = document.getElementById("salesRep");
+        select.textContent = "";
+        [""].concat(salesReps).forEach(function (name) {
+          var option = document.createElement("option");
+          option.value = name; option.textContent = name || "担当営業を選択してください";
+          select.appendChild(option);
+        });
+        select.disabled = false;
+        document.getElementById("submitBtn").disabled = false;
+        if (data.parentName) {
+          var parent = document.getElementById("parentInfo");
+          parent.textContent = "紹介元: " + data.parentName + "（変更できません）";
+          parent.classList.remove("hidden");
+        }
+      })
+      .catch(function () { showError("担当営業の名簿を読み込めませんでした。時間をおいてページを開き直してください。"); });
+  }
 
   function showError(msg) {
     var el = document.getElementById("errBanner");
@@ -115,11 +161,17 @@
     var agencyName = document.getElementById("agencyName").value.trim();
     var personName = document.getElementById("personName").value.trim();
     var email      = document.getElementById("email").value.trim();
+    var referringAgency = document.getElementById("referringAgency").value.trim();
+    var salesRep = document.getElementById("salesRep").value;
 
     if (!agencyName) { showError("会社名を入力してください。"); return; }
     if (!personName) { showError("担当者名を入力してください。"); return; }
+    if (salesReps.indexOf(salesRep) < 0) { showError("担当営業を選択してください。"); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       showError("メールアドレスの形式が正しくありません。"); return;
+    }
+    if (referringAgency.length > 200) {
+      showError("紹介元の代理店は200文字以内で入力してください。"); return;
     }
     if (typeof CONFIG === "undefined" || !CONFIG.gasUrl) {
       showError("設定の読み込みに失敗しました。時間をおいて再度お試しください。"); return;
@@ -144,7 +196,10 @@
         signupKey: SIGNUP_KEY,
         agencyName: agencyName,
         personName: personName,
-        email: email
+        email: email,
+        referringAgency: referringAgency,
+        salesRep: salesRep,
+        parentCode: PARENT_CODE
       })
     })
       .then(function (res) { return res.json(); })
@@ -182,11 +237,22 @@
         + "お手数ですが下のリンクをブックマークしてお使いください。"
         + "現在ご案内できる案件は " + (data.caseCount || 0) + " 件です。";
     }
+    if (data.parentName || typeof data.referringAgency === "string") {
+      var referral = document.getElementById("doneReferringAgency");
+      referral.textContent = "登録済みの紹介元の代理店：" + (data.parentName || data.referringAgency || "未入力");
+      referral.classList.remove("hidden");
+    }
     var a = document.getElementById("linksBtn");
     a.href = data.linksUrl || "#";
     document.getElementById("linksRaw").textContent = data.linksUrl || "";
     document.getElementById("doneCard").classList.add("show");
+    if (data.referralUrl) {
+      var link = document.getElementById("referralLink");
+      link.href = data.referralUrl; link.textContent = data.referralUrl;
+      document.getElementById("doneReferralUrl").classList.remove("hidden");
+    }
   }
+  loadRegistration();
 })();
 </script>
 </body>

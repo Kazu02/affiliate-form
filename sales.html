@@ -32,6 +32,7 @@
 
   /* ---- タブ ---- */
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  @media (max-width: 520px) { .tabs { display: grid; grid-template-columns: 1fr 1fr; } }
   .tab {
     flex: 1 1 0; padding: 13px 6px; font-size: .92rem; font-weight: 700; font-family: inherit;
     background: #fff; color: #475569; border: 1px solid #cbd5e1; border-radius: 10px; cursor: pointer;
@@ -122,7 +123,12 @@
   }
   .chip.on { background: #334155; color: #fff; border-color: #334155; }
 
-  .cust-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .cust-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .agency-row { margin-left: calc(var(--depth) * 14px); border-left: 3px solid #c7d2fe; overflow-wrap: anywhere; }
+  .agency-count { color: #334155; font-size: .9rem; margin-top: 8px; }
+  .sales-totals { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .85rem; }
+  .sales-totals th, .sales-totals td { padding: 9px 5px; border-bottom: 1px solid #e2e8f0; text-align: right; }
+  .sales-totals th:first-child, .sales-totals td:first-child { text-align: left; }
   .cust-head .nm { font-size: 1.02rem; font-weight: 700; }
   .cust-head .last { font-size: .74rem; color: #94a3b8; white-space: nowrap; }
 
@@ -246,6 +252,7 @@
       <button type="button" class="tab active" id="tabCheck">確認のお願い<span class="badge hidden" id="tabBadge"></span></button>
       <button type="button" class="tab hidden" id="tabLine">LINEの確認<span class="badge hidden" id="tabLineBadge"></span></button>
       <button type="button" class="tab" id="tabCust">お客様一覧</button>
+      <button type="button" class="tab" id="tabAgency">代理店</button>
     </div>
 
     <section id="paneCheck">
@@ -257,6 +264,18 @@
         押した内容はそのまま事務へ届きます。
       </div>
       <div id="checkList"></div>
+    </section>
+
+    <section id="paneAgency" class="hidden">
+      <div class="guide">ご自身が担当する代理店と、その下の代理店です。件数は各代理店が直接出した申込です。<br>承認は、今月申し込んだ分の現在の承認件数です。</div>
+      <div class="notice hidden" id="agencyNotice"></div>
+      <div class="listnote" id="agencyMonth"></div>
+      <div id="agencyTree"></div>
+      <div class="card">
+        <h2 style="font-size:1rem">営業ごとの今月の申込・承認</h2>
+        <div class="meta">代理店経由はその代理店の担当営業へ計上します。担当未設定の場合は申込の紹介者名で集計します。</div>
+        <div id="salesTotals"></div>
+      </div>
     </section>
 
     <section id="paneLine" class="hidden">
@@ -737,7 +756,7 @@
 
     var head = el("div", "cust-head");
     head.appendChild(el("div", "nm", c.name + " 様"));
-    head.appendChild(el("div", "last", "最新 " + String(c.lastRecvAt || "").substring(0, 10)));
+    head.appendChild(el("div", "last", "最終の申込 " + String(c.lastRecvAt || "").substring(0, 10)));
     card.appendChild(head);
 
     c.cases.filter(matchFilter).forEach(function (k) {
@@ -1106,11 +1125,52 @@
     return card;
   }
 
+  function renderAgencies() {
+    var note = document.getElementById("agencyNotice");
+    note.textContent = DATA.agencyNotice || "";
+    note.classList.toggle("hidden", !DATA.agencyNotice);
+    document.getElementById("agencyMonth").textContent = (DATA.agencyMonth || "") + " の申込・承認";
+    var tree = document.getElementById("agencyTree");
+    tree.textContent = "";
+    (DATA.agencyTree || []).forEach(function (a) {
+      var row = el("div", "card agency-row");
+      row.style.setProperty("--depth", Math.min(4, Math.max(0, Number(a.depth) || 0)));
+      row.appendChild(el("div", "case", (a.depth ? "↳ " : "") + a.name));
+      row.appendChild(el("div", "meta", a.code + " / 担当営業: " + (a.salesRep || "未設定") + " / " + a.status));
+      row.appendChild(el("div", "agency-count", "今月の申込 " + countLabel(a.applications) + " / 承認 " + countLabel(a.approved)));
+      tree.appendChild(row);
+    });
+    if (!(DATA.agencyTree || []).length && !DATA.agencyNotice) {
+      tree.appendChild(el("div", "empty", "担当する代理店はまだ登録されていません。"));
+    }
+    var totals = document.getElementById("salesTotals");
+    totals.textContent = "";
+    if (!(DATA.salesTotals || []).length) return;
+    var table = el("table", "sales-totals");
+    var header = el("tr");
+    ["営業担当", "申込", "承認"].forEach(function (label) {
+      var th = el("th", "", label); th.scope = "col"; header.appendChild(th);
+    });
+    var thead = el("thead"); thead.appendChild(header); table.appendChild(thead);
+    var tbody = el("tbody");
+    DATA.salesTotals.forEach(function (total) {
+      var row = el("tr");
+      row.appendChild(el("th", "", total.name));
+      row.appendChild(el("td", "", countLabel(total.applications)));
+      row.appendChild(el("td", "", countLabel(total.approved)));
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody); totals.appendChild(table);
+  }
+
+  function countLabel(value) { return typeof value === "number" ? value + " 件" : "確認中"; }
+
   // ---- タブ ----
   var TABS = [
     { key: "check", tab: "tabCheck", pane: "paneCheck" },
     { key: "line",  tab: "tabLine",  pane: "paneLine"  },
-    { key: "cust",  tab: "tabCust",  pane: "paneCust"  }
+    { key: "cust",  tab: "tabCust",  pane: "paneCust"  },
+    { key: "agency", tab: "tabAgency", pane: "paneAgency" }
   ];
 
   function setTab(which) {
@@ -1135,6 +1195,7 @@
     renderChips();
     renderCustomers();
     hide("loading");
+    renderAgencies();
     show("content");
     // 確認のお願いが無ければ、開いた時点でお客様一覧を見せる。
     setTab((d.summary && d.summary.needCheck > 0) ? "check" : "cust");

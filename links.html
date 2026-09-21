@@ -106,6 +106,12 @@
 
     <div id="list"></div>
 
+    <div class="card hidden" id="referralCard">
+      <div class="name">代理店を紹介するURL</div>
+      <div class="url"><a id="referralUrl" target="_blank" rel="noopener noreferrer"></a></div>
+      <button type="button" class="btn btn-copy" id="copyReferral">紹介URLをコピー</button>
+    </div>
+
     <div class="foot">
       最終確認: <span id="updatedAt"></span><br>
       案件について不明な点は担当者までお問い合わせください。
@@ -130,6 +136,13 @@
   }
 
   function render(data) {
+    if (data.referralUrl) {
+      var referral = document.getElementById("referralUrl");
+      referral.href = data.referralUrl;
+      referral.textContent = data.referralUrl;
+      document.getElementById("copyReferral").onclick = function () { copyText(data.referralUrl, this); };
+      show("referralCard");
+    } else { hide("referralCard"); }
     document.getElementById("who").textContent =
       [data.agencyName, data.personName ? data.personName + " 様" : ""].filter(Boolean).join(" / ");
     document.getElementById("updatedAt").textContent = data.updatedAt || "";

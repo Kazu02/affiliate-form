@@ -119,6 +119,10 @@ function getConfigSheetByCode(ss, formCode) {
 // ---- GET: フォーム設定を返す ----
 function doGet(e) {
   try {
+    if (e && e.parameter && e.parameter.action === "agencyRegistration") {
+      return ContentService.createTextOutput(JSON.stringify(agencyRegistrationPayload_(e.parameter.parent)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
     // 緊急クエスト管理ルート（quest_admin）はクエスト終了(2026/07/31)に伴い撤去した。
     // 広告主成果管理シートの保守ルート（キー保護。月指定の再生成と件数確認のみ）。
     // キーは ScriptProperties から読む。未設定なら誰も通さない。
@@ -222,6 +226,15 @@ function doPost(e) {
     // 署名の検証・秘密値の有無・多重送信の判定はすべて向こうで行う。**読み取りだけ。**
     if (data.action === "customerMenuSnapshot") {
       return handleCustomerMenuSnapshot_(data);
+    }
+
+    // 代理店の系図を基幹システムへ渡す（CaseAgency.gs）。**読み取りだけ。**
+    // 合言葉はスナップショットと同じで、URLではなく本文で受ける。
+    if (data.action === "agencyTree") {
+      const rejected = customerMenuVerifyRequest_(data);
+      if (rejected) return rejected;
+      return ContentService.createTextOutput(JSON.stringify(agencyTreePayload_()))
+        .setMimeType(ContentService.MimeType.JSON);
     }
 
     // 顧客の動きをアフィリエイト報告用のグループへ知らせる（CustomerNotify.gs）。
@@ -689,6 +702,7 @@ function onOpen() {
     .addItem("代理店を削除",                   "showAgencyDeletePrompt")
     .addItem("全代理店へリンク集を送り直す",   "resendAllAgencyLinks")
     .addItem("代理店別の取扱案件を同期",       "syncAgencyCaseMatrixFromMenu")
+    .addItem("代理店マスタに担当営業・上位代理店の列を作る", "ensureAgencyTreeColumnsFromMenu")
     .addItem("申請状況一覧を作り直す（自社＋全代理店）", "buildApplicationStatusSheetFromMenu")
     .addItem("代理店別サマリーを作り直す（件数・承認率）", "buildAgencySummarySheetFromMenu")
     .addSeparator()

@@ -74,7 +74,14 @@ function customerMenuReject_(code) {
  * doPost から呼ばれる入口。検証してスナップショットを返す。
  * 検証に落ちた理由は呼び出し側へ返すが、**秘密値そのものは何も返さない。**
  */
-function handleCustomerMenuSnapshot_(data) {
+/**
+ * 本文で受け取った合言葉を確かめる。通れば null、駄目なら断りの応答を返す。
+ *
+ * **スナップショットと代理店の系図で同じ口を使う。** 合言葉をURLのクエリに載せると、
+ * GASが返すリダイレクト先（googleusercontent.com）まで秘密値が付いて回る。
+ * 保管するのはSHA-256だけで、平文はScriptPropertiesにも置かない。
+ */
+function customerMenuVerifyRequest_(data) {
   const expected = customerMenuSecret_().toLowerCase();
   if (expected.length !== 64) return customerMenuReject_("not_configured");
 
@@ -90,6 +97,12 @@ function handleCustomerMenuSnapshot_(data) {
     return customerMenuReject_("invalid_token");
   }
   if (!customerMenuReserveNonce_(nonce)) return customerMenuReject_("replayed");
+  return null;
+}
+
+function handleCustomerMenuSnapshot_(data) {
+  const rejected = customerMenuVerifyRequest_(data);
+  if (rejected) return rejected;
 
   let payload;
   try {

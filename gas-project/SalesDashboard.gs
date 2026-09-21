@@ -363,6 +363,53 @@ function sdAttachTodo_(customers, activeCases) {
   });
 }
 
+// 自分の担当を起点に、その子孫だけを返す。担当が途中で変わっても枝は切らない。
+function sdAgencyRows_(repName, agencies, counts) {
+  const children = Object.create(null), selected = Object.create(null), visited = Object.create(null);
+  agencies.forEach(function (a) {
+    if (a.parentCode) (children[a.parentCode] || (children[a.parentCode] = [])).push(a);
+  });
+  function select(a, depth) {
+    if (selected[a.code] || depth > AM_MAX_DEPTH) return;
+    selected[a.code] = a;
+    (children[a.code] || []).forEach(function (child) { select(child, depth + 1); });
+  }
+  agencies.filter(function (a) { return a.salesRep === repName; }).forEach(function (a) { select(a, 1); });
+  const out = [];
+  function append(a, depth) {
+    if (visited[a.code] || depth >= AM_MAX_DEPTH) return;
+    visited[a.code] = true;
+    const total = counts[a.code];
+    out.push({
+      code: a.code, name: a.name, salesRep: a.salesRep, status: a.status, depth: depth,
+      parentCode: selected[a.parentCode] ? a.parentCode : null,
+      applications: total.ambiguous ? null : total.applications,
+      approved: total.ambiguous ? null : total.approved
+    });
+    (children[a.code] || []).forEach(function (child) { if (selected[child.code]) append(child, depth + 1); });
+  }
+  agencies.filter(function (a) { return selected[a.code] && !selected[a.parentCode]; })
+    .forEach(function (a) { append(a, 0); });
+  // 手で作られた不正な既存データにも無限再帰しない。
+  agencies.forEach(function (a) { if (selected[a.code] && !visited[a.code]) append(a, 0); });
+  return out;
+}
+
+function sdAgencySummary_(repName, month) {
+  try {
+    const agencies = readAgencies_(true);
+    const stats = agencyApplicationStats_(agencies, month);
+    return {
+      agencyTree: sdAgencyRows_(repName, agencies, stats.counts),
+      salesTotals: stats.salesTotals,
+      agencyNotice: stats.ambiguous ? "同名の代理店を判別できない申込があります。該当代理店の件数は確認中です。事務へご連絡ください。" : ""
+    };
+  } catch (err) {
+    Logger.log("営業ダッシュボードの代理店集計: " + err);
+    return { agencyTree: [], salesTotals: [], agencyNotice: "いま代理店と営業の件数を読み込めません。0件ではありません。時間をおいて再度お試しください。" };
+  }
+}
+
 function salesDashboardPayload_(token) {
   const rep = sdFindByToken_(token);
   if (!rep) {
@@ -377,6 +424,7 @@ function salesDashboardPayload_(token) {
   const customers = sdCustomers_(rep.name, problems);
   const checks    = sdChecks_(rep.name, problems);
   const thisMonth = formatJST(new Date()).substring(0, 7); // yyyy/MM
+  const agencySummary = sdAgencySummary_(rep.name, thisMonth);
 
   // 稼働中の案件。「この顧客がまだやっていないもの」を出すために使う。
   // **読めなかったときは todo を付けない。** 付けてしまうと、実際には稼働案件が
@@ -425,7 +473,11 @@ function salesDashboardPayload_(token) {
       activeCaseCount: activeCases.length
     },
     checks: checks,
-    customers: customers
+    customers: customers,
+    agencyMonth: thisMonth,
+    agencyTree: agencySummary.agencyTree,
+    salesTotals: agencySummary.salesTotals,
+    agencyNotice: agencySummary.agencyNotice
   };
 }
 
