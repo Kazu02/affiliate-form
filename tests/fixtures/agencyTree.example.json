@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "generatedAt": "2026/09/21 19:00:00",
+  "agencies": [
+    {
+      "code": "ag01",
+      "name": "作り物代理店ag01",
+      "contact": "作り物担当ag01",
+      "salesRep": "岩本拓也",
+      "parentCode": null,
+      "status": "稼働",
+      "registeredOn": "2026/08/01",
+      "applications": 1,
+      "approved": 1
+    },
+    {
+      "code": "ag07",
+      "name": "同名代理店",
+      "contact": "担当甲",
+      "salesRep": "菅原貴博",
+      "parentCode": "ag01",
+      "status": "稼働",
+      "registeredOn": "2026/08/01",
+      "applications": 2,
+      "approved": 2
+    },
+    {
+      "code": "ag08",
+      "name": "同名代理店",
+      "contact": "担当乙",
+      "salesRep": "村井亮介",
+      "parentCode": null,
+      "status": "稼働",
+      "registeredOn": "2026/08/01",
+      "applications": 2,
+      "approved": 1
+    },
+    {
+      "code": "ag09",
+      "name": "作り物代理店ag09",
+      "contact": "作り物担当ag09",
+      "salesRep": "村井亮介",
+      "parentCode": "ag07",
+      "status": "稼働",
+      "registeredOn": "2026/08/01",
+      "applications": 1,
+      "approved": 0
+    },
+    {
+      "code": "ag10",
+      "name": "作り物代理店ag10",
+      "contact": "作り物担当ag10",
+      "salesRep": "岩本拓也",
+      "parentCode": "ag09",
+      "status": "稼働",
+      "registeredOn": "2026/08/01",
+      "applications": 0,
+      "approved": 0
+    }
+  ]
+}
