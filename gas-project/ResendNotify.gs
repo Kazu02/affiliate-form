@@ -94,7 +94,12 @@ function resendRecentApplicationsFromMenu() {
     ui.ButtonSet.OK_CANCEL);
   if (answer !== ui.Button.OK) return;
 
-  messages.forEach(function (m) { notifyLineGroup(m); });
-  ui.alert(messages.length + "件を再通知しました。");
+  // 5件までは1回の push にまとめる（通数はグループ人数 × push 回数で数えられる）
+  if (sendLineGroup_(messages)) {
+    ui.alert(messages.length + "件を再通知しました。");
+  } else {
+    ui.alert("LINE へ送れなかった分があります（月間送信数の上限など）。\n" +
+      "シート「LINE送信待ち」に残し、送信枠が空きしだい自動で送ります。");
+  }
 }
 

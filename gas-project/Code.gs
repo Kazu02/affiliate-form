@@ -1869,23 +1869,9 @@ function checkDetectedGroupId() {
 }
 
 // ---- LINE グループへプッシュ通知 ----
+// 届かなかった本文（月間送信数の上限など）はシート「LINE送信待ち」に残り、後で送られる（LineOutbox.gs）。
 function notifyLineGroup(message) {
-  const props   = PropertiesService.getScriptProperties();
-  const token   = props.getProperty("LINE_CHANNEL_TOKEN");
-  const groupId = props.getProperty("LINE_GROUP_ID");
-  if (!token || !groupId) return;
-  UrlFetchApp.fetch(LINE_PUSH_API, {
-    method: "post",
-    headers: {
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " + token
-    },
-    payload: JSON.stringify({
-      to: groupId,
-      messages: [{ type: "text", text: message.length > 4990 ? message.substring(0, 4990) + "..." : message }]
-    }),
-    muteHttpExceptions: true
-  });
+  return sendLineGroup_([message]);
 }
 
 // ---- 通知メッセージを組み立て ----
@@ -2166,6 +2152,10 @@ function dailyReport() {
   // 中で try/catch しており、取れなければ空文字が返る（この節のせいで日次が止まらない）。
   const approvalGapSection = buildApprovalGapSection_();
   if (approvalGapSection) message += "\n" + approvalGapSection;
+
+  // 公式LINEの今月の送信数（アポ報告と共用の枠）。同じ吹き出しに足すので通数は増えない。
+  const lineQuotaSection = lineQuotaReportSection_(true);
+  if (lineQuotaSection) message += "\n\n" + lineQuotaSection;
 
   notifyLineGroup(message);
   Logger.log(message);
