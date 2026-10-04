@@ -455,23 +455,16 @@ function findNextAnswerRow(sheet) {
   return 2;
 }
 
-// ---- スプレッドシート取得 or 作成 ----
+// ---- メインSS取得（作成はしない） ----
+// 以前は開けないと空の「アフィリエイト管理」を新しく作り、SPREADSHEET_ID をそちらへ書き換えていた。
+// 2026-10 に一時的な openById の失敗でこれが起き、全フォームが「設定シートが見つかりません」になった。
+// いまはメインSSのIDを定数で持ち、開けなければエラーのままにする（次の呼び出しで自然に戻る）。
 function getOrCreateSpreadsheet() {
   const props = PropertiesService.getScriptProperties();
-  let ssId    = props.getProperty("SPREADSHEET_ID");
-
-  if (ssId) {
-    try { return SpreadsheetApp.openById(ssId); } catch (e) {}
+  if (props.getProperty("SPREADSHEET_ID") !== REP_STATUS_MAIN_ID) {
+    props.setProperty("SPREADSHEET_ID", REP_STATUS_MAIN_ID);
   }
-
-  const ss = SpreadsheetApp.create("アフィリエイト管理");
-  props.setProperty("SPREADSHEET_ID", ss.getId());
-
-  const configSheet = ss.getSheets()[0];
-  configSheet.setName(CONFIG_PREFIX + "申請フォーム");
-  initConfigSheet(configSheet, "申請フォーム", "", "form1");
-
-  return ss;
+  return SpreadsheetApp.openById(REP_STATUS_MAIN_ID);
 }
 
 // ---- 設定シートが存在する最初のフォーム記号を返す ----

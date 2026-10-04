@@ -468,10 +468,8 @@ function agencyReleaseLock_(lock) {
 }
 
 function agencyReadSpreadsheet_() {
-  const id = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
-  if (!id) throw new Error("スプレッドシートが未設定です。");
-  // getOrCreateSpreadsheet は接続失敗時に新規作成するため、読み取り口では使わない。
-  return SpreadsheetApp.openById(id);
+  // 読み取り口は書き込みをしないので、SPREADSHEET_ID ではなく定数のメインSSを直接開く。
+  return SpreadsheetApp.openById(REP_STATUS_MAIN_ID);
 }
 
 function readAgencies_(readOnly) {

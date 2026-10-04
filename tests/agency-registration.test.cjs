@@ -520,7 +520,7 @@ test('agencyTreeは接続失敗・設定欠落でも新しいスプレッドシ�
     let reads = 0;
     h.context.SpreadsheetApp.openById = () => { reads++; throw new Error('not accessible'); };
     assert.equal(h.context.agencyTreePayload_().status, 503);
-    assert.equal(reads, spreadsheetId ? 1 : 0);
+    assert.equal(reads, 1); // プロパティに関係なく定数のメインSSだけを開く
     assert.equal(h.sheet.writes.length, 0);
     assert.equal(h.mails.length, 0);
   }
