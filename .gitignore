@@ -25,3 +25,10 @@ CLAUDE_REVIEW.md
 
 # 会議ログ・議事録（出席者の実名を含むため公開リポジトリへ出さない）
 01_資料/
+
+# 案件の記録（取引・振込・口座・顧客や相手の名前を含む）。このリポジトリは GitHub Pages の配信元で public のため出さない。
+# 2026-10-12 本人の決定で追跡を外した。過去の履歴には残っている。記録は手元のファイルとして続ける。
+DECISIONS.md
+ROADMAP.md
+PROJECT_CONTEXT.md
+CHAT_HANDOFF_PROMPT.md
