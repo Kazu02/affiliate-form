@@ -41,6 +41,12 @@ const AM_SALES_REP_HEADER = "担当営業";
 const AM_PARENT_CODE_HEADER = "上位代理店コード";
 const AM_MAX_DEPTH = 5; // 本人を1階層目と数える
 
+// 代理店登録フォームの紹介者欄にだけ出す社外の紹介者。自社営業名簿（JISHA_REFERRER_OPTIONS）には入れない。
+// 選ばれた場合は担当営業・紹介元の代理店をここで決めた値で保存する。parentCode は紹介者の代理店登録後に設定する。
+const AGENCY_FORM_INTRODUCERS = [
+  { label: "高木様（トリトルグローバル）", salesRep: "柳沢悠貴", referringAgency: "トリトルグローバル 高木様", parentCode: "" }
+];
+
 const AGENCY_STATUS_ACTIVE = "稼働";
 const AGENCY_STATUS_STOP   = "停止";
 
@@ -506,6 +512,10 @@ function agencySalesRepOptions_() {
   return JISHA_REFERRER_OPTIONS.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
+function agencyFormIntroducer_(label) {
+  return AGENCY_FORM_INTRODUCERS.filter(function (i) { return i.label === label; })[0] || null;
+}
+
 function agencyValidateSalesRep_(name) {
   if (agencySalesRepOptions_().indexOf(name) < 0) throw new Error("担当営業を名簿から選択してください。");
 }
@@ -567,7 +577,8 @@ function agencyRegistrationPayload_(parentCode) {
   const parent = code ? readAgencies_(true).filter(function (a) {
     return a.code === code && a.status === AGENCY_STATUS_ACTIVE;
   })[0] : null;
-  return { salesReps: agencySalesRepOptions_(), parentName: parent ? parent.name : null };
+  const introducers = AGENCY_FORM_INTRODUCERS.map(function (i) { return i.label; });
+  return { salesReps: agencySalesRepOptions_().concat(introducers), parentName: parent ? parent.name : null };
 }
 
 // 申請状況一覧の既存列だけを読む。コード表記も受け付け、過去の名前表記は
@@ -749,13 +760,14 @@ function registerAgency_(data, fromForm) {
   const name   = String((data && data.agencyName)   || "").trim();
   const person = String((data && data.personName)   || "").trim();
   const email  = String((data && data.email)        || "").trim();
-  const salesRep = String((data && data.salesRep) || "").trim();
-  const requestedParent = String((data && data.parentCode) || "").trim();
+  const introducer = agencyFormIntroducer_(String((data && data.salesRep) || "").trim());
+  const salesRep = introducer ? introducer.salesRep : String((data && data.salesRep) || "").trim();
+  const requestedParent = String((data && data.parentCode) || "").trim() || (introducer ? introducer.parentCode : "");
   const referringValue = data && data.referringAgency;
   if (referringValue != null && typeof referringValue !== "string") {
     throw new Error("紹介元の代理店は代理店名を入力してください。");
   }
-  const referringAgency = (referringValue || "").trim();
+  const referringAgency = (referringValue || "").trim() || (introducer ? introducer.referringAgency : "");
 
   if (!name)   throw new Error("会社名（代理店名）を入力してください。");
   if (!person) throw new Error("担当者名を入力してください。");

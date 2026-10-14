@@ -337,6 +337,20 @@ test('担当営業・親コードの列をヘッダーで読み書きし、不�
   assert.equal(old.locked, false);
 });
 
+test('紹介者欄で社外紹介者を選ぶと担当営業と紹介元を決めた値で保存する', () => {
+  const h = harness();
+  const result = h.post({ ...input, salesRep: '高木様（トリトルグローバル）' });
+  assert.equal(result.result, 'success');
+  assert.equal(result.salesRep, '柳沢悠貴');
+  assert.equal(result.referringAgency, 'トリトルグローバル 高木様');
+  const saved = h.agencies().at(-1);
+  assert.equal(saved.salesRep, '柳沢悠貴');
+  assert.equal(saved.referringAgency, 'トリトルグローバル 高木様');
+  assert.equal(h.context.agencySalesRepOptions_().includes('高木様（トリトルグローバル）'), false);
+  const typed = harness().post({ ...input, salesRep: '高木様（トリトルグローバル）', referringAgency: '入力された紹介元' });
+  assert.equal(typed.referringAgency, '入力された紹介元');
+});
+
 test('担当営業はサーバーでも必須・名簿外と自由入力を拒否する', () => {
   for (const salesRep of ['', undefined, '自由入力の担当者', { name: '岩本拓也' }]) {
     const h = harness();
@@ -428,7 +442,8 @@ test('公開の名前解決は指定1件だけ。担当者・連絡先・他社�
     const data = copy(h.context.agencyRegistrationPayload_(parent));
     assert.deepEqual(Object.keys(data), ['salesReps', 'parentName']);
     assert.equal(data.parentName, '同名代理店');
-    assert.equal(data.salesReps.length, 10);
+    assert.equal(data.salesReps.length, 11);
+    assert.equal(data.salesReps[10], '高木様（トリトルグローバル）');
     assert.ok(!JSON.stringify(data).includes('担当甲'));
   }
   assert.equal(h.context.agencyRegistrationPayload_('unknown').parentName, null);
