@@ -300,8 +300,7 @@
     }
 
     try {
-      const res    = await fetch(url, { method: "GET" });
-      const config = await res.json();
+      const config = await loadFormConfig(url);
       if (config.error) { showError(); return; }
 
       // 稼働していない案件・無効な代理店リンクはフォームを出さない。
@@ -315,6 +314,40 @@
       buildForm(config);
     } catch (e) {
       showError();
+    }
+  }
+
+  // 設定取得だけを再試行する。申込送信・クリック記録には使わない。
+  async function loadFormConfig(url) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      let timer;
+      try {
+        const timeout = new Promise((resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error("設定の読み込みがタイムアウトしました"));
+            if (controller) controller.abort();
+          }, 25000);
+        });
+        const request = (async () => {
+          const res = await fetch(url, {
+            method: "GET", cache: "no-store",
+            ...(controller ? { signal: controller.signal } : {})
+          });
+          if (!res.ok) {
+            const error = new Error("設定を取得できませんでした");
+            error.noRetry = ![404, 408, 429].includes(res.status) && res.status < 500;
+            throw error;
+          }
+          return await res.json();
+        })();
+        return await Promise.race([request, timeout]);
+      } catch (error) {
+        if (attempt === 1 || error.noRetry) throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
