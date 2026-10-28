@@ -4128,6 +4128,10 @@ function buildIntegratedRepSheets() {
     tab.getRange(1, 1, tab.getMaxRows(), tab.getMaxColumns()).clearDataValidations();
     const rows = perRep[rep] || [];
     const all = [header.slice(0, w)].concat(rows);
+    // 振込先6列は文字書式で書く（clear() で書式が消えると "0925531" が数値になり先頭ゼロが落ち、登録日時が日付になる。
+    // 統合顧客管理の再構築（フォーム顧客管理 rebuildIntegratedCustomers）と同じ扱い。2026-10-28 の再生成で3行の先頭ゼロが落ちた）
+    const payoutStart = header.indexOf("金融機関名");
+    if (payoutStart >= 0) tab.getRange(1, payoutStart + 1, all.length, Math.min(6, w - payoutStart)).setNumberFormat("@");
     tab.getRange(1, 1, all.length, w).setValues(all);
     tab.getRange(1, 1, all.length, w).setBorder(true, true, true, true, true, true); // 枠線
     if (rows.length > 0) {
