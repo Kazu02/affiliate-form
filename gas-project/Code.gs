@@ -38,6 +38,14 @@ const FORM_CODE_PATTERN = /^[a-zA-Z0-9_]+$/;
 // 「フォーム管理 > 営業担当を同期」を1回実行するだけ。
 // これで (1)全自社フォームの紹介者選択肢 (2)顧客管理SS/SS2の担当タブ が揃う。
 const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人,藤井勇大";
+// 自社フォームの紹介者欄にだけ出す社外の紹介者（会社名）。営業名簿ではないので
+// 担当タブ・営業ダッシュボード・振込先フォーム・代理店登録の担当営業には載せない。
+const JISHA_EXTERNAL_REFERRERS = ["株式会社Wonder Craft"];
+
+// 自社フォームの紹介者選択肢（営業名簿＋社外の紹介者）
+function jishaReferrerFormOptions_() {
+  return [JISHA_REFERRER_OPTIONS].concat(JISHA_EXTERNAL_REFERRERS).join(",");
+}
 
 // 150件クエスト設定
 const QUEST150_TARGET_TOTAL = 150;
@@ -758,7 +766,8 @@ function applyReferrerSelectToJishaSheets(force) {
   const props = PropertiesService.getScriptProperties();
   const applied = props.getProperty("REFERRER_OPTIONS_APPLIED");
   // 旧フラグ("REFERRER_SELECT_APPLIED"=="1")からの移行：値未記録なら「未同期」とみなして一度適用する
-  if (!force && applied === JISHA_REFERRER_OPTIONS) return { updated: 0, skipped: true };
+  const options = jishaReferrerFormOptions_();
+  if (!force && applied === options) return { updated: 0, skipped: true };
 
   const ss = getOrCreateSpreadsheet();
   let updated = 0;
@@ -786,16 +795,16 @@ function applyReferrerSelectToJishaSheets(force) {
     for (let i = fieldsStartIdx; i < values.length; i++) {
       if (String(values[i][0]).trim() === "referrer") {
         sheet.getRange(i + 1, 3).setValue("select");
-        sheet.getRange(i + 1, 6).setValue(JISHA_REFERRER_OPTIONS);
+        sheet.getRange(i + 1, 6).setValue(options);
         updated++;
         break;
       }
     }
   });
 
-  props.setProperty("REFERRER_OPTIONS_APPLIED", JISHA_REFERRER_OPTIONS);
+  props.setProperty("REFERRER_OPTIONS_APPLIED", options);
   props.setProperty("REFERRER_SELECT_APPLIED", "1"); // 後方互換
-  Logger.log("自社シートの紹介者選択肢を同期しました（更新 " + updated + " シート）: " + JISHA_REFERRER_OPTIONS);
+  Logger.log("自社シートの紹介者選択肢を同期しました（更新 " + updated + " シート）: " + options);
   return { updated: updated, skipped: false };
 }
 
