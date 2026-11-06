@@ -37,18 +37,21 @@ const formSheet = agency => [
   ['referrer', '紹介者', 'select', 'TRUE', '', '柳沢悠貴']
 ];
 
-test('自社フォームの紹介者欄に営業名簿と株式会社Wonder Craftを並べ、代理店フォームは変えない', () => {
+test('自社フォームの紹介者欄に営業名簿と社外紹介者2社を並べ、代理店フォームは変えない', () => {
   const own = formSheet('');
   const agency = formSheet('ag01');
   const { ctx, props } = harness({ '設定_test': own, '設定_ag': agency, '回答_test': formSheet('') }, 'old');
   const result = ctx.applyReferrerSelectToJishaSheets(false);
   assert.equal(result.updated, 1);
   const options = own[4][5].split(',');
-  assert.deepEqual(options, vm.runInContext('JISHA_REFERRER_OPTIONS', ctx).split(',').concat(['株式会社Wonder Craft']));
+  const roster = vm.runInContext('JISHA_REFERRER_OPTIONS', ctx).split(',');
+  assert.deepEqual(options, roster.concat(['株式会社Wonder Craft', '新市場開発株式会社']));
+  assert.equal(roster.length, 10);
   assert.equal(agency[4][5], '柳沢悠貴');
   assert.equal(props.REFERRER_OPTIONS_APPLIED, own[4][5]);
   // 営業名簿そのものには入れない（担当タブ・ダッシュボードは増えない）
-  assert.ok(!vm.runInContext('JISHA_REFERRER_OPTIONS', ctx).split(',').includes('株式会社Wonder Craft'));
+  assert.ok(!roster.includes('株式会社Wonder Craft'));
+  assert.ok(!roster.includes('新市場開発株式会社'));
 });
 
 test('適用済みの選択肢と同じなら起動時の再適用をしない', () => {

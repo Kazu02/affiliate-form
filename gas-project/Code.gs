@@ -40,7 +40,7 @@ const FORM_CODE_PATTERN = /^[a-zA-Z0-9_]+$/;
 const JISHA_REFERRER_OPTIONS = "柳沢悠貴,岩本拓也,菅原貴博,村井亮介,大島雅史,小椋裕也,細川貴弘,藤森宣哉,江口裕人,藤井勇大";
 // 自社フォームの紹介者欄にだけ出す社外の紹介者（会社名）。営業名簿ではないので
 // 担当タブ・営業ダッシュボード・振込先フォーム・代理店登録の担当営業には載せない。
-const JISHA_EXTERNAL_REFERRERS = ["株式会社Wonder Craft"];
+const JISHA_EXTERNAL_REFERRERS = ["株式会社Wonder Craft", "新市場開発株式会社"];
 
 // 自社フォームの紹介者選択肢（営業名簿＋社外の紹介者）
 function jishaReferrerFormOptions_() {
