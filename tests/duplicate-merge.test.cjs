@@ -54,7 +54,7 @@ function caseGrid(rows) {
 }
 const row = (recv, name, tel, ref, shot, appr) => ['nomukomu', recv, '', '', name, tel, ref, shot, appr, ''];
 
-function harness(grid, advRows = []) {
+function harness(grid, advRows = [], extraAdv = []) {
   const main = fakeSheet('設定_ノムコム', grid);
   const sheets = [main];
   const ss = {
@@ -66,7 +66,7 @@ function harness(grid, advRows = []) {
   const ctx = {
     Logger: { log() {} }, console,
     Utilities: { formatDate: (d) => d.toISOString() },
-    SpreadsheetApp: { flush() {}, openById: () => ({ getSheets: () => [adv], getSheetByName: n => (n === '202608' ? adv : null) }) },
+    SpreadsheetApp: { flush() {}, openById: () => ({ getSheets: () => [adv, ...extraAdv], getSheetByName: n => [adv, ...extraAdv].find(x => x.getName() === n) || null }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => null, setProperty() {} }) }
   };
   vm.createContext(ctx);
@@ -184,4 +184,22 @@ test('広告主シート: 残す申請の行が無く後の申請の行だけ残
   assert.equal(result.advertiserFixed, 1);
   assert.equal(result.advertiserRemoved, 0);
   assert.deepEqual(adv.grid[2], ['2026/08/01 10:00:00', 'ノムコム', '高橋三郎', '菅原貴博', 'https://first', false, true]);
+});
+
+test('広告主シート: 別の月のシートに残った完全な写しだけを消し、内容が違う行は残す', () => {
+  const sep = fakeSheet('202609', [['タイトル'], ['受信日時'],
+    ['2026/08/31 10:00:00', 'ノムコム', '写し', '菅原貴博', 'u1', false, true],
+    ['2026/08/31 11:00:00', 'ノムコム', '承認だけ違う', '菅原貴博', 'u2', false, true],
+    ['2026/09/01 09:00:00', 'ノムコム', '9月の申請', '菅原貴博', 'u3', false, false]]);
+  const { ctx, adv } = harness(caseGrid([]), [
+    ['2026/08/31 10:00:00', 'ノムコム', '写し', '菅原貴博', 'u1', false, true],
+    ['2026/08/31 11:00:00', 'ノムコム', '承認だけ違う', '菅原貴博', 'u2', false, false]
+  ], [sep]);
+  sep.getFilter = () => null;
+  adv.getFilter = () => null;
+  const r = ctx.cleanupAdvertiserCarriedRows();
+  assert.equal(r.removed, 1);
+  assert.equal(r.keptDifferent, 1);
+  assert.deepEqual(sep.grid.slice(2).map(x => x[2]), ['承認だけ違う', '9月の申請']);
+  assert.equal(adv.grid.length, 4, '正しい月のシートは触らない');
 });

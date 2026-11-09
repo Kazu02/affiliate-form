@@ -401,6 +401,59 @@ function mergeDuplicateAdvertiserFromArchive() {
   return result;
 }
 
+// ---- 広告主シート: 別の月のシートに残った「写し」を片づける ----
+// 月シートの行のうち、受信日時の月がそのシートの月と違い、かつ正しい月のシートに
+// 案件・名前・受信日時・紹介者・スクショ・トラッキング漏れ・承認がすべて同じ行があるものだけを消す。
+// 1項目でも違う行・正しい月のシートに無い行は残す（どちらが正しいか機械では決めない）。
+function cleanupAdvertiserCarriedRows() {
+  const adv = SpreadsheetApp.openById(ADVERTISER_SS_ID);
+  const tz = (adv.getSpreadsheetTimeZone && adv.getSpreadsheetTimeZone()) || "GMT";
+  const monthOf = function (ms) {
+    const d = new Date(ms + 9 * 3600000);
+    return d.getUTCFullYear() + ("0" + (d.getUTCMonth() + 1)).slice(-2);
+  };
+  const sheets = {};
+  adv.getSheets().forEach(function (sh) {
+    const nm = sh.getName();
+    if (!/^\d{6}$/.test(nm) || sh.getLastRow() < ADVERTISER_DATA_START_ROW) return;
+    const rows = sh.getRange(ADVERTISER_DATA_START_ROW, 1, sh.getLastRow() - ADVERTISER_DATA_START_ROW + 1, 7).getValues();
+    sheets[nm] = { sheet: sh, rows: rows, times: rows.map(function (r) { return dupTimeMs_(r[0], tz); }) };
+  });
+  const sig = function (m, i) {
+    const r = m.rows[i];
+    return [m.times[i], String(r[1]), dupNormName_(r[2]), String(r[3]).trim(), String(r[4]).trim(), r[5] === true, r[6] === true].join("	");
+  };
+  const result = { removed: 0, keptDifferent: 0, keptNoHome: 0, bySheet: {} };
+  Object.keys(sheets).forEach(function (nm) {
+    const m = sheets[nm];
+    const del = [];
+    m.rows.forEach(function (r, i) {
+      if (!String(r[2] || "").trim() || !m.times[i]) return;
+      const home = monthOf(m.times[i]);
+      if (home === nm) return;
+      const h = sheets[home];
+      if (!h) { result.keptNoHome++; return; }
+      const mine = sig(m, i);
+      const same = h.rows.some(function (_, j) { return sig(h, j) === mine; });
+      if (same) del.push(i); else result.keptDifferent++;
+    });
+    if (!del.length) return;
+    const filter = m.sheet.getFilter();
+    const filterA1 = filter ? filter.getRange().getA1Notation() : "";
+    if (filter) filter.remove();
+    del.sort(function (a, b) { return b - a; }).forEach(function (i) { m.sheet.deleteRow(ADVERTISER_DATA_START_ROW + i); });
+    SpreadsheetApp.flush();
+    if (filterA1) { try { m.sheet.getRange(filterA1).createFilter(); } catch (e) { Logger.log("フィルタの付け直しに失敗: " + nm + " / " + e); } }
+    result.removed += del.length;
+    result.bySheet[nm] = del.length;
+  });
+  const msg = "広告主シートの月違いの写し " + result.removed + "行を削除（" + JSON.stringify(result.bySheet) + "）・内容が違うため残した " +
+    result.keptDifferent + "・正しい月のシートが無いため残した " + result.keptNoHome;
+  Logger.log(msg);
+  try { SpreadsheetApp.getActiveSpreadsheet().toast(msg + " 完了", "広告主シート", 60); } catch (e) {}
+  return result;
+}
+
 // ---- メニュー ----
 function previewDuplicateApplicationsFromMenu() {
   const r = mergeDuplicateApplicationsCore_(true);

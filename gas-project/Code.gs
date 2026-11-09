@@ -733,6 +733,7 @@ function onOpen() {
     .addItem("重複申請を下見する（同じ人×同じ案件）", "previewDuplicateApplicationsFromMenu")
     .addItem("重複申請を1件にまとめる（同じ人×同じ案件）", "mergeDuplicateApplications")
     .addItem("重複申請の広告主シート分を片づける", "mergeDuplicateAdvertiserFromArchive")
+    .addItem("広告主シートの月違いの写しを片づける", "cleanupAdvertiserCarriedRows")
     .addItem("代理店別サマリーを作り直す（件数・承認率）", "buildAgencySummarySheetFromMenu")
     .addSeparator()
     .addItem("ASP獲得ログと突合する",         "reconcileAspLogFromMenu")
@@ -3794,8 +3795,20 @@ function createAdvertiserMonthSheet(advertiserSS, yyyymm) {
     const template = monthSheets[monthSheets.length - 1];
     newSheet = template.copyTo(advertiserSS);
     newSheet.setName(yyyymm);
+    // フィルタがあると deleteRows が無言で失敗し、前月分が新しい月へ残る（2026-11 に10月分40行が202611へ残った）。
+    // フィルタを外してから消し、それでも残っていれば中身だけ消す。
+    const copiedFilter = newSheet.getFilter();
+    const copiedFilterA1 = copiedFilter ? copiedFilter.getRange().getA1Notation() : "";
+    if (copiedFilter) copiedFilter.remove();
     const lastRow = newSheet.getLastRow();
     if (lastRow > 2) newSheet.deleteRows(3, lastRow - 2);
+    SpreadsheetApp.flush();
+    if (newSheet.getLastRow() > 2) {
+      newSheet.getRange(3, 1, newSheet.getLastRow() - 2, newSheet.getMaxColumns()).clearContent();
+    }
+    if (copiedFilterA1) {
+      try { newSheet.getRange(copiedFilterA1).createFilter(); } catch (e) { Logger.log("フィルタの付け直しに失敗（無視）: " + e); }
+    }
   } else {
     newSheet = advertiserSS.insertSheet(yyyymm);
   }
