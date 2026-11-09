@@ -360,8 +360,33 @@ function doPost(e) {
       : "";
 
     const rowData = buildRow(data, config, screenshotUrl, formName, agencyName);
-    const nextRow = findNextAnswerRow(sheet);
-    sheet.getRange(nextRow, ANSWER_START_COL, 1, rowData.length).setValues([rowData]);
+
+    // 同じ人が同じ案件へ2回目の申請 → 新しい行は足さず最初の行へまとめる（DuplicateMerge.gs）。
+    // ほぼ同時の2回送信でも両方が「初回」にならないよう、確認と書き込みをロックで1本にする。
+    // ロックが取れないときは申請を落とさないことを優先し、通常どおり行を足す。
+    const dupLock = LockService.getScriptLock();
+    const dupLocked = dupLock.tryLock(20000);
+    try {
+      let merged = null;
+      try { merged = dupMergeIncoming_(ss, sheet, formName, rowData, config); }
+      catch (dupErr) { Logger.log("重複判定エラー（通常どおり記録します）: " + dupErr); }
+      if (merged) {
+        try {
+          notifyLineGroup(dupIncomingLineMessage_(config.formDisplayName || config.formTitle || formName,
+            data["name"] || "", merged.referrer || data["referrer"] || "", merged.keptRecv));
+        } catch (lineErr) {
+          Logger.log("LINE通知エラー（重複）: " + lineErr);
+        }
+        return ContentService
+          .createTextOutput(JSON.stringify({ result: "success" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const nextRow = findNextAnswerRow(sheet);
+      sheet.getRange(nextRow, ANSWER_START_COL, 1, rowData.length).setValues([rowData]);
+      SpreadsheetApp.flush();
+    } finally {
+      if (dupLocked) dupLock.releaseLock();
+    }
 
     // 代理店SSにも書き込み
     try {
@@ -705,6 +730,9 @@ function onOpen() {
     .addItem("代理店別の取扱案件を同期",       "syncAgencyCaseMatrixFromMenu")
     .addItem("代理店マスタに担当営業・上位代理店の列を作る", "ensureAgencyTreeColumnsFromMenu")
     .addItem("申請状況一覧を作り直す（自社＋全代理店）", "buildApplicationStatusSheetFromMenu")
+    .addItem("重複申請を下見する（同じ人×同じ案件）", "previewDuplicateApplicationsFromMenu")
+    .addItem("重複申請を1件にまとめる（同じ人×同じ案件）", "mergeDuplicateApplications")
+    .addItem("重複申請の広告主シート分を片づける", "mergeDuplicateAdvertiserFromArchive")
     .addItem("代理店別サマリーを作り直す（件数・承認率）", "buildAgencySummarySheetFromMenu")
     .addSeparator()
     .addItem("ASP獲得ログと突合する",         "reconcileAspLogFromMenu")
