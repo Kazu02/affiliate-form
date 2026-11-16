@@ -361,6 +361,9 @@ function doPost(e) {
 
     const rowData = buildRow(data, config, screenshotUrl, formName, agencyName);
 
+    // 公式LINEから来た申請なら、参照と案件記号だけを別シートへ（LineRef.gs）。失敗しても申請は通す。
+    if (data.lineRef) recordLineSubmission_(ss, formName, data.lineRef);
+
     // 同じ人が同じ案件へ2回目の申請 → 新しい行は足さず最初の行へまとめる（DuplicateMerge.gs）。
     // ほぼ同時の2回送信でも両方が「初回」にならないよう、確認と書き込みをロックで1本にする。
     // ロックが取れないときは申請を落とさないことを優先し、通常どおり行を足す。

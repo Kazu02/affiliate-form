@@ -107,6 +107,16 @@ function handleCustomerMenuSnapshot_(data) {
   let payload;
   try {
     payload = buildCustomerMenuSnapshot_();
+    // 頼まれたときだけ載せる（古い統合アプリは応答の形を厳密に検査する）。LineRef.gs 参照。
+    if (data && data.includeLineSubmissions === true) {
+      try {
+        const lineSubs = buildLineSubmissions_(getOrCreateSpreadsheet());
+        payload.lineSubmissions = lineSubs.rows;
+        payload.lineSubmissionsTruncated = lineSubs.truncated;
+      } catch (lineErr) {
+        Logger.log("LINE経由申請の読み取りに失敗（名前の照合だけで返す）: " + lineErr);
+      }
+    }
   } catch (err) {
     Logger.log("customerMenuSnapshot エラー: " + err);
     return customerMenuReject_("unavailable");

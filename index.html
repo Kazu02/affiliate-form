@@ -343,6 +343,10 @@
   let DRAFT_KEY = "";
   let FIXED_REFERRER = "";
   let AGENCY_CODE = "";
+  // 公式LINEから来た人の参照（2026-11-16）。中身はLINE側だけが読める番号で、名前などは入っていない。
+  // 申込の行を名前で照合しなくても「誰がどの案件をやったか」が分かるようにするためのもの。
+  let LINE_REF = "";
+  const LINE_REF_PATTERN = /^[a-f0-9]{48}$/;
   const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
   // 紹介者固定リンクの記号→担当（例 ?form=ouchikuraberu-s）。担当追加時はここに1行足す。
   // 紹介者を固定するリンクの記号。名簿（JISHA_REFERRER_OPTIONS）10名ぶん揃えてある。
@@ -372,6 +376,7 @@
     DRAFT_KEY = "affiliateFormDraft:" + (request.rawForm || request.formCode || "default");
     FIXED_REFERRER = request.fixedReferrer;
     AGENCY_CODE = request.agencyCode;
+    LINE_REF = request.lineRef;
     let url = request.formCode ? GAS_URL + "?form=" + encodeURIComponent(request.formCode) : GAS_URL;
     if (AGENCY_CODE) {
       url += (url.indexOf("?") >= 0 ? "&" : "?") + "ag=" + encodeURIComponent(AGENCY_CODE);
@@ -433,6 +438,8 @@
     const params  = new URLSearchParams(window.location.search);
     const rawForm = (params.get("form") || "").trim();
     const agencyCode = (params.get("ag") || "").trim();
+    const rawLineRef = (params.get("lc") || "").trim().toLowerCase();
+    const lineRef = LINE_REF_PATTERN.test(rawLineRef) ? rawLineRef : "";
     let formCode = rawForm;
     let fixedReferrer = "";
     Object.keys(REFERRER_SUFFIX_MAP).forEach(suffix => {
@@ -441,7 +448,7 @@
         fixedReferrer = REFERRER_SUFFIX_MAP[suffix];
       }
     });
-    return { rawForm, formCode, fixedReferrer, agencyCode };
+    return { rawForm, formCode, fixedReferrer, agencyCode, lineRef };
   }
 
   function showSuspended(message) {
@@ -622,6 +629,7 @@
     formData.screenshotName = screenshotFile.name;
     // 代理店リンク経由なら誰の紹介かはGAS側で代理店マスタから決まる
     if (AGENCY_CODE) formData.agencyCode = AGENCY_CODE;
+    if (LINE_REF) formData.lineRef = LINE_REF;
 
     document.getElementById("sendingOverlay").classList.add("show");
     document.getElementById("submitBtn").disabled = true;
@@ -677,7 +685,8 @@
       savedAt: Date.now(),
       fields: {},
       clickTime: document.getElementById("clickTime")?.value || "",
-      clickId: document.getElementById("clickId")?.value || ""
+      clickId: document.getElementById("clickId")?.value || "",
+      lineRef: LINE_REF
     };
     (config.fields || []).forEach(field => {
       const el = document.getElementById(field.id);
@@ -701,6 +710,8 @@
       const value = draft.fields ? draft.fields[field.id] : "";
       if (value != null && value !== "") setFieldValue(field, value);
     });
+    // URLから参照が消えた開き直しでも、同じ下書きの続きなら参照を引き継ぐ。
+    if (!LINE_REF && LINE_REF_PATTERN.test(String(draft.lineRef || ""))) LINE_REF = draft.lineRef;
     if (draft.clickId) {
       // 前回の続きなら同じIDを使う。**アフィリエイトURLも作り直す**（作り直さないと
       // 復元前に採番した別のIDがリンクに載ったままになり、ASPと自社で違うIDになる）。
