@@ -62,3 +62,31 @@ test('snapshot rows carry case code, reference and date; bad rows are skipped', 
   const out = JSON.parse(JSON.stringify(g.buildLineSubmissions_(ss)));
   assert.deepEqual(out, { rows: [{ caseCode: 'nomukomu', lineRef: REF, submittedOn: '2026/11/16' }], truncated: false });
 });
+
+test('same case, reference and day collapse to one row; order stays oldest first', () => {
+  const g = load();
+  const ss = fakeSpreadsheet();
+  g.recordLineSubmission_(ss, 'nomukomu', REF);
+  const rows = ss.sheets['LINE経由申請'].rows;
+  rows.push(['2026/11/16 15:00:00', 'nomukomu', REF], ['2026/11/17 09:00:00', 'nomukomu', REF], ['2026/11/17 10:00:00', 'doda', REF]);
+  const out = JSON.parse(JSON.stringify(g.buildLineSubmissions_(ss)));
+  assert.deepEqual(out, { truncated: false, rows: [
+    { caseCode: 'nomukomu', lineRef: REF, submittedOn: '2026/11/16' },
+    { caseCode: 'nomukomu', lineRef: REF, submittedOn: '2026/11/17' },
+    { caseCode: 'doda', lineRef: REF, submittedOn: '2026/11/17' },
+  ] });
+});
+
+test('keeps the newest rows and reports truncation above the cap', () => {
+  const g = load();
+  const ss = fakeSpreadsheet();
+  g.recordLineSubmission_(ss, 'c0', REF);
+  const rows = ss.sheets['LINE経由申請'].rows;
+  const max = g.LINE_REF_MAX_ROWS ?? vm.runInContext('LINE_REF_MAX_ROWS', g);
+  for (let i = 1; i <= max; i++) rows.push(['2026/11/16 12:00:00', 'c' + i, REF]);
+  const out = g.buildLineSubmissions_(ss);
+  assert.equal(out.truncated, true);
+  assert.equal(out.rows.length, max);
+  assert.equal(out.rows[0].caseCode, 'c1');
+  assert.equal(out.rows[out.rows.length - 1].caseCode, 'c' + max);
+});

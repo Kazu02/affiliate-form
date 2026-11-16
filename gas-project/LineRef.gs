@@ -20,7 +20,11 @@
 const LINE_REF_SHEET = "LINE経由申請";
 const LINE_REF_HEADERS = ["受付日時", "フォーム記号", "LINE参照"];
 const LINE_REF_PATTERN = /^[a-f0-9]{48}$/;
-const LINE_REF_MAX_ROWS = 6000;
+// 返す行の上限は統合アプリの受け入れ上限（20,000）に合わせる。同じ日・同じ案件・同じ参照は1行にまとめる
+// ので、上限に届くのは「顧客×案件×申請日」が2万通りを超えたとき（2026-11 の規模なら数十年先）。
+const LINE_REF_MAX_ROWS = 20000;
+// 読むのは新しい行から最大この行数まで（GAS の実行時間を守るため）。
+const LINE_REF_SCAN_ROWS = 60000;
 
 function isValidLineRef_(v) {
   return LINE_REF_PATTERN.test(String(v || "").trim());
@@ -53,7 +57,8 @@ function recordLineSubmission_(ss, formName, lineRef) {
   }
 }
 
-// スナップショット用。新しい行から最大 LINE_REF_MAX_ROWS 件。
+// スナップショット用。新しい行から読み、同じ「案件・参照・申請日」は1行にまとめて最大 LINE_REF_MAX_ROWS 件。
+// 返す順は古い→新しい。読み切れなかった行・上限で落とした行があれば truncated。
 function buildLineSubmissions_(ss) {
   const sh = ss.getSheetByName(LINE_REF_SHEET);
   if (!sh) return { rows: [], truncated: false };
@@ -61,18 +66,22 @@ function buildLineSubmissions_(ss) {
   if (last < 2) return { rows: [], truncated: false };
   let first = 2;
   let truncated = false;
-  if (last - 1 > LINE_REF_MAX_ROWS) { first = last - LINE_REF_MAX_ROWS + 1; truncated = true; }
+  if (last - 1 > LINE_REF_SCAN_ROWS) { first = last - LINE_REF_SCAN_ROWS + 1; truncated = true; }
   const values = sh.getRange(first, 1, last - first + 1, LINE_REF_HEADERS.length).getValues();
   const rows = [];
-  values.forEach(function (r) {
+  const seen = {};
+  for (let i = values.length - 1; i >= 0; i--) {
+    const r = values[i];
     const ref = String(r[2] || "").trim();
     const caseCode = String(r[1] || "").trim();
-    if (!isValidLineRef_(ref) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(caseCode)) return;
-    rows.push({
-      caseCode: caseCode,
-      lineRef: ref,
-      submittedOn: String(toDisplayDate_(r[0]) || "").substring(0, 10)
-    });
-  });
+    if (!isValidLineRef_(ref) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(caseCode)) continue;
+    const submittedOn = String(toDisplayDate_(r[0]) || "").substring(0, 10);
+    const key = caseCode + "|" + ref + "|" + submittedOn;
+    if (seen[key]) continue;
+    if (rows.length >= LINE_REF_MAX_ROWS) { truncated = true; break; }
+    seen[key] = true;
+    rows.push({ caseCode: caseCode, lineRef: ref, submittedOn: submittedOn });
+  }
+  rows.reverse();
   return { rows: rows, truncated: truncated };
 }
