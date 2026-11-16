@@ -53,6 +53,30 @@
     }
     .affiliate-btn:active { transform: scale(0.98); }
     .affiliate-btn.clicked { background: #16a34a; }
+    .affiliate-btn:disabled { background: #9ca3af; cursor: default; }
+
+    /* アフィリエイトURLは「開く」のでなく「コピーしてブラウザに貼る」。
+       リンクとして踏ませると参照元（このページ）がASPへ渡り、成果が付かないことがあるため。 */
+    .affiliate-url-label { font-size: 0.8rem; color: #666; margin-bottom: 6px; }
+    .affiliate-url-box {
+      width: 100%; padding: 12px 14px; margin-bottom: 12px;
+      border: 1.5px solid #ddd; border-radius: 8px; background: #fafafa;
+      font-size: 0.85rem; font-family: ui-monospace, Menlo, Consolas, monospace;
+      color: #333; line-height: 1.5; resize: none;
+      word-break: break-all; overflow-wrap: anywhere;
+      -webkit-user-select: all; user-select: all;
+    }
+    .copy-steps {
+      margin-top: 12px; padding: 12px 14px; background: #eef2ff;
+      border-radius: 8px; font-size: 0.85rem; color: #3730a3; line-height: 1.7;
+    }
+    .copy-steps ol { padding-left: 1.3em; }
+    .copy-fail {
+      display: none; margin-top: 10px; padding: 10px 14px;
+      background: #fef2f2; border: 1px solid #fca5a5;
+      border-radius: 8px; font-size: 0.85rem; color: #b91c1c;
+    }
+    .copy-fail.show { display: block; }
 
     .click-time-display {
       display: none; margin-top: 10px; padding: 10px 14px;
@@ -185,13 +209,26 @@
           <div class="step-title">下のボタンから作業を行ってください</div>
         </div>
         <div class="notice">
-          必ず下のボタンをタップしてリンクを開いてください。<br>
-          別のリンクから作業しても記録されません。<br><br>
-          サンクスメールのスクショをお送りいただくために必ずリンク先では、メールアドレスの記載をしてください。
+          必ず下のボタンで<strong>URLをコピー</strong>し、Safari や Chrome などのブラウザのアドレス欄に貼り付けて開いてください。<br>
+          別のURLから作業しても記録されません。<br><br>
+          サンクスメールのスクショをお送りいただくために必ず開いたページでは、メールアドレスの記載をしてください。
         </div>
-        <a id="affiliateBtn" class="affiliate-btn" href="#" target="_blank" rel="noopener">読み込み中...</a>
+        <div class="affiliate-url-label">作業用のURL</div>
+        <textarea id="affiliateUrlBox" class="affiliate-url-box" rows="3" readonly aria-label="作業用のURL">読み込み中...</textarea>
+        <button type="button" id="affiliateBtn" class="affiliate-btn" disabled>読み込み中...</button>
+        <div class="copy-fail" id="copyFail">
+          自動でコピーできませんでした。上のURLを長押しして「すべて選択」→「コピー」してください。
+        </div>
         <div class="click-time-display" id="clickTimeDisplay">
-          ✅ クリック時刻を記録しました：<strong id="clickTimeText"></strong>
+          ✅ 記録しました（<strong id="clickTimeText"></strong>）。ブラウザに貼り付けて作業してください。
+        </div>
+        <div class="copy-steps">
+          <ol>
+            <li>上のボタンでURLをコピー</li>
+            <li>Safari や Chrome などのブラウザを開く</li>
+            <li>アドレス欄に貼り付けて開き、作業する</li>
+            <li>作業が終わったらこの画面に戻り、スクショを添付して送信</li>
+          </ol>
         </div>
         <input type="hidden" id="clickTime" name="clickTime">
         <input type="hidden" id="clickId" name="clickId">
@@ -236,18 +273,59 @@
   // FPRに確認した公式の仕様（2026-08-28 回答）。param1〜param5 が CL付加情報1〜5 に対応する。
   // ここに弊社のクリックIDを載せると、そのまま獲得ログへ返るので突合が確実になる。
   const ASP_CLICK_ID_PARAM = "param1";
+  const COPY_BUTTON_TEXT   = "タップしてURLをコピー";
+  const COPIED_BUTTON_TEXT = "コピーしました（押すと再コピー）";
 
   // アフィリエイトURLへクリックIDを付ける。
   // **押す前に確定させる。** 押してから採番しても href は既に決まっていて間に合わない。
   // 下書きから復元したIDがあればそれを使う（同じ申請で2回押しても同じIDが載る）。
+  // **リンクとして開かせない。** URLを表示してコピーさせ、お客様にブラウザへ貼ってもらう。
+  // （このページから踏むと参照元がASPへ渡り、成果が付かないことがあるため。2026-11-16）
   function applyClickIdToAffiliate(config) {
     const btn = document.getElementById("affiliateBtn");
+    const box = document.getElementById("affiliateUrlBox");
     const base = config.affiliateUrl || "";
-    if (!base) { btn.href = "#"; return; }
+    if (!base) {
+      window._affiliateUrl = "";
+      box.value = "URLが設定されていません。担当者へお問い合わせください。";
+      btn.disabled = true;
+      return;
+    }
     if (!window._clickId) window._clickId = newClickId();
     document.getElementById("clickId").value = window._clickId;
+    window._affiliateUrl = buildAffiliateUrl(base, window._clickId);
+    box.value = window._affiliateUrl;
+    btn.disabled = false;
+  }
+
+  function buildAffiliateUrl(base, clickId) {
     const sep = base.indexOf("?") >= 0 ? "&" : "?";
-    btn.href = base + sep + ASP_CLICK_ID_PARAM + "=" + encodeURIComponent(window._clickId);
+    return base + sep + ASP_CLICK_ID_PARAM + "=" + encodeURIComponent(clickId);
+  }
+
+  // クリップボードへ書く。LINE などのアプリ内ブラウザで navigator.clipboard が
+  // 使えない・拒否されることがあるので、選択して execCommand("copy") の経路も持つ。
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) { /* 下の経路へ */ }
+    try {
+      // iOS は readonly のままだと選択できないことがあるので、コピーの間だけ外す。
+      const box = document.getElementById("affiliateUrlBox");
+      box.readOnly = false;
+      box.focus();
+      box.select();
+      box.setSelectionRange(0, text.length);
+      const ok = document.execCommand("copy");
+      box.readOnly = true;
+      box.blur();
+      return !!ok;
+    } catch (e) {
+      return false;
+    }
   }
 
   // クリックとフォーム送信を結ぶための一意な値。
@@ -433,18 +511,36 @@
 
     // アフィリエイトボタン
     const btn = document.getElementById("affiliateBtn");
-    btn.textContent = config.affiliateButtonText || "アフィリエイトリンクを開く";
-    // **クリックIDはボタンを押す前に決めておく。** ASPへ渡すのはリンクを開く瞬間なので、
-    // 押してから採番したのでは間に合わない（href は既に確定している）。
+    btn.textContent = COPY_BUTTON_TEXT;
+    // **クリックIDはコピーより前に決めておく。** 表示しているURLにそのまま載せるため。
     applyClickIdToAffiliate(config);
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
+      const url = window._affiliateUrl || "";
+      if (!url) return;
+      const copied = await copyText(url);
+      const fail = document.getElementById("copyFail");
+      if (!copied) {
+        // 手でコピーしてもらう。選択状態にしておけば長押しでコピーできる。
+        fail.classList.add("show");
+        const box = document.getElementById("affiliateUrlBox");
+        try { box.focus(); box.select(); } catch (e) {}
+      } else {
+        fail.classList.remove("show");
+      }
+      // 記録は「コピーを押した時刻」。手でコピーする人も同じボタンを押した後なので、ここで取る。
+      // 2回目以降のコピーでは最初の時刻を上書きしない（ASPのクリック時刻に一番近いのは最初）。
+      if (document.getElementById("clickTime").value) {
+        btn.textContent = copied ? COPIED_BUTTON_TEXT : COPY_BUTTON_TEXT;
+        btn.classList.toggle("clicked", copied);
+        return;
+      }
       const now       = new Date();
       const formatted = formatDatetime(now);
       document.getElementById("clickTime").value    = now.toISOString();
       document.getElementById("clickTimeText").textContent = formatted;
       document.getElementById("clickTimeDisplay").classList.add("show");
-      btn.classList.add("clicked");
-      btn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
+      btn.classList.toggle("clicked", copied);
+      btn.textContent = copied ? COPIED_BUTTON_TEXT : COPY_BUTTON_TEXT;
 
       // クリック時刻をサーバー側にも記録してもらう。
       // **この画面の時計はお客様の端末のもので、ずれていることがある。**
@@ -501,7 +597,7 @@
       }
     }
     if (!document.getElementById("clickTime").value) {
-      alert("アフィリエイトリンクをタップしてから送信してください。");
+      alert("作業用のURLをコピーして、ブラウザで作業してから送信してください。");
       return;
     }
     const screenshotFile = document.getElementById("screenshotInput").files[0];
@@ -621,7 +717,7 @@
       text.textContent = isNaN(date.getTime()) ? draft.clickTime : formatDatetime(date);
       display.classList.add("show");
       btn.classList.add("clicked");
-      btn.textContent = "✅ クリック済み（作業完了後に下へ進む）";
+      btn.textContent = COPIED_BUTTON_TEXT;
     }
   }
 
